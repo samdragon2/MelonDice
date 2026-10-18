@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "melondice"
+version = "0.2.0"
+description = "Terminal-native ChatGPT, PDF viewer, and text editor for Raspberry Pi and SSH"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "AGPL-3.0-or-later"}
+authors = [{name = "SamRyong"}]
+dependencies = [
+  "prompt_toolkit==3.0.52",
+  "httpx>=0.27,<1",
+  "PyJWT[crypto]>=2.9,<3",
+  "Pillow>=10.4,<13",
+  "PyMuPDF>=1.24.10,<2",
+]
+
+[project.scripts]
+melondice = "melondice.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

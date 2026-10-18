@@ -1,0 +1,19 @@
+{
+  "document_directory": "/home/YOUR_USER/Documents",
+  "theme": "dark",
+  "mouse_support": true,
+  "pdf_graphics": "auto",
+  "escape_timeout_ms": 200,
+  "history_persistence": true,
+  "editor_autosave_seconds": 30,
+  "model": "",
+  "callback_port": 1455,
+  "shortcuts": {
+    "cycle": ["escape tab", "f6"],
+    "home": ["f1"],
+    "information": ["f2"],
+    "settings": ["c-o"],
+    "close": ["c-q", "f10"],
+    "save": ["c-s", "f8"]
+  }
+}
