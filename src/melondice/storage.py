@@ -17,6 +17,7 @@ DEFAULTS = {
     "theme": "dark",
     "mouse_support": True,
     "pdf_graphics": "auto",
+    "pdf_cell_pixels": "",
     "escape_timeout_ms": 200,
     "history_persistence": True,
     "editor_autosave_seconds": 30,
@@ -31,6 +32,19 @@ DEFAULTS = {
         "save": ["c-s", "f8"],
     },
 }
+
+
+def parse_cell_pixels(value):
+    """An empty string means query the TTY; explicit values are measured pixels."""
+    if value == "":
+        return None
+    if isinstance(value, str):
+        match = re.fullmatch(r"([1-9]\d{0,2})x([1-9]\d{0,2})", value)
+        if match:
+            width, height = map(int, match.groups())
+            if width <= 256 and height <= 512:
+                return width, height
+    raise ValueError("pdf_cell_pixels must be empty (automatic) or WIDTHxHEIGHT, 1–256 by 1–512 measured pixels")
 
 
 @contextmanager
@@ -121,8 +135,9 @@ class Store:
     def validate(config):
         if config["theme"] not in {"dark", "light"}:
             raise ValueError("theme must be dark or light")
-        if config["pdf_graphics"] not in {"auto", "off"}:
-            raise ValueError("pdf_graphics must be auto or off")
+        if config["pdf_graphics"] not in {"auto", "kitty", "sixel", "off"}:
+            raise ValueError("pdf_graphics must be auto, kitty, sixel or off")
+        parse_cell_pixels(config["pdf_cell_pixels"])
         for key, low, high in [("escape_timeout_ms", 50, 2000), ("callback_port", 1024, 65535),
                                ("editor_autosave_seconds", 0, 3600)]:
             if type(config[key]) is not int or not low <= config[key] <= high:

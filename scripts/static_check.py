@@ -72,6 +72,25 @@ def main():
                     and any(isinstance(target, ast.Name) and target.id == "DEFAULTS" for target in node.targets))
     if set(config) != {node.value for node in defaults.keys}:
         failures.append("Configuration example fields differ from declared defaults")
+    modes = {"auto", "kitty", "sixel", "off"}
+    cli_tree = ast.parse((PACKAGE / "cli.py").read_text())
+    graphics_argument = next(node for node in ast.walk(cli_tree) if isinstance(node, ast.Call)
+                             and node.args and isinstance(node.args[0], ast.Constant)
+                             and node.args[0].value == "--pdf-graphics")
+    cli_modes = next(ast.literal_eval(keyword.value) for keyword in graphics_argument.keywords
+                     if keyword.arg == "choices")
+    validated_modes = next(ast.literal_eval(node.comparators[0]) for node in ast.walk(defaults_tree)
+                           if isinstance(node, ast.Compare) and isinstance(node.left, ast.Subscript)
+                           and isinstance(node.left.slice, ast.Constant)
+                           and node.left.slice.value == "pdf_graphics")
+    settings_tree = ast.parse((PACKAGE / "settings.py").read_text())
+    settings_modes = next(ast.literal_eval(node.value) for node in ast.walk(settings_tree)
+                          if isinstance(node, ast.Assign)
+                          and any(isinstance(target, ast.Name) and target.id == "modes" for target in node.targets))
+    if set(cli_modes) != modes or validated_modes != modes or set(settings_modes) != modes:
+        failures.append("PDF graphics choices differ between CLI, validation and Options")
+    if config["pdf_graphics"] not in modes or config["pdf_cell_pixels"] != "":
+        failures.append("Configuration example must use a known mode and automatic cell geometry")
     for name in ("README.md", "SPEC.md", "DEVELOPMENT_REPORT.md", "THIRD_PARTY_NOTICES.md", "LICENSE"):
         if not (ROOT / name).is_file():
             failures.append("Required artifact missing: " + name)
@@ -88,7 +107,7 @@ def main():
     if failures:
         raise SystemExit("\n".join(failures))
     print(f"Static audit passed: {len(paths)} source modules; Python 3.10 grammar; code-object compilation; "
-          "global symbols/local import paths; metadata/dependency consistency; entry point; JSON fields; no GUI imports or Ctrl+P binding; required documents; whitespace.")
+          "global symbols/local import paths; metadata/dependency consistency; entry point; JSON fields; PDF mode consistency; no GUI imports or Ctrl+P binding; required documents; whitespace.")
     print("No application module was imported or executed. No runtime tests were performed.")
 
 

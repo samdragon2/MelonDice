@@ -44,6 +44,8 @@ class Application:
         self.closed = False
         self.exiting = False
         self.signals = {}
+        self.graphics_context = None
+        self.graphics_revision = graphics.revision
         self.clipboard = SharedClipboard()
         self.home_window = Window(content=FormattedTextControl(self.home_text, focusable=True),
                                   wrap_lines=True, always_hide_cursor=True)
@@ -113,7 +115,7 @@ class Application:
             raise
         self.bindings, self.style = bindings, self.make_style()
         self.ui.ttimeoutlen = self.ui.timeoutlen = config["escape_timeout_ms"] / 1000
-        self.notify("Option saved. PDF graphics mode changes apply after restart.")
+        self.notify("Option saved. PDF graphics mode and cell geometry changes apply after restart.")
 
     def make_bindings(self):
         bindings = KeyBindings()
@@ -341,7 +343,7 @@ class Application:
                     "PyJWT (MIT), cryptography (Apache-2.0/BSD), Pillow (HPND), PyMuPDF/MuPDF (AGPL/commercial). "
                     "Melon Dice: AGPL-3.0-or-later. See THIRD_PARTY_NOTICES.md.\n\n"
                     "Shell/chat/editor/dialogs work in a POSIX UTF-8 VT100-compatible terminal, including ordinary SSH. "
-                    "PDF images require confirmed Kitty graphics and pixel cell geometry. Bare Linux console PDF images "
+                    "PDF images require Kitty or Sixel presentation and valid pixel cell geometry. Use --pdf-graphics sixel inside mlterm-fb. Bare Linux console PDF images "
                     "and tmux/screen graphics are unsupported; text apps remain usable.\n\n"
                     "F6 replaces intercepted Alt+Tab; F7 Save As, F8 Save, F10 Close. Ctrl+I is Tab, so F2 is Information. "
                     "Ctrl+Space provides selection when Shift+arrows are not transmitted. Mouse dragging depends on "
@@ -423,7 +425,27 @@ class Application:
 
     def before_render(self, _app):
         try:
-            self.graphics.hide(self.ui.output)
+            size = self.ui.output.get_size()
+            viewer = self.sessions.get("pdf")
+            visible = (not self.ui.is_done and not self.exiting and not self.dialog and self.active == "pdf"
+                       and size.columns >= 80 and size.rows >= 24 and viewer is not None)
+            identity = viewer.display_identity() if visible else None
+            context = (size.columns, size.rows, self.style.invalidation_hash(), self.graphics.cell)
+            if identity is None:
+                self.graphics.suspend()
+            presenter = self.graphics.presenter
+            if self.graphics.protocol == "kitty":
+                self.graphics.hide(self.ui.output)
+            elif self.graphics.placed and (identity != presenter.placed_identity
+                    or context != self.graphics_context or not self.graphics.supported
+                    or self.ui.renderer.last_rendered_screen is None):
+                self.graphics.hide(self.ui.output)
+            self.graphics_context = context
+            if self.graphics.text_dirty:
+                # Sixel erasure changes real text cells behind the framework's
+                # diff cache. Repaint once for damage, never once per pump tick.
+                self.ui.renderer.erase(leave_alternate_screen=False)
+                self.graphics.text_dirty = False
         except OSError as error:
             self.exiting = True
             if self.ui.future is not None and not self.ui.future.done():
@@ -431,8 +453,20 @@ class Application:
 
     def after_render(self, _app):
         try:
+            if self.ui.is_done or self.exiting:
+                return
             if not self.dialog and self.active == "pdf" and self.sessions["pdf"].viewport in self.ui.layout.find_all_windows():
                 self.graphics.begin(self.ui.output)
+                presenter = self.graphics.presenter
+                if (self.graphics.protocol == "sixel" and self.graphics.placed
+                        and presenter.rectangle != self.sessions["pdf"].bounds):
+                    # Layout changes (e.g. a wrapped heading) are known only
+                    # after layout. Repair text before presenting at new bounds.
+                    self.graphics.hide(self.ui.output)
+                    self.ui.renderer.erase(leave_alternate_screen=False)
+                    self.graphics.text_dirty = False
+                    self.ui.invalidate()
+                    return
                 self.sessions["pdf"].present()
             elif not self.dialog and self.active == "pdf":
                 # Also probe on the recent-documents screen, which has no image window yet.
@@ -442,15 +476,13 @@ class Application:
             if self.ui.future is not None and not self.ui.future.done():
                 self.ui.exit(exception=error)
         except Exception as error:
-            self.graphics.mode = "off"
-            self.graphics.placed = False
-            self.graphics.reason = f"Terminal image presentation failed: {type(error).__name__}: {error}"
+            self.graphics.disable(f"Terminal image presentation failed: {type(error).__name__}: {error}")
             self.notify(self.graphics.reason)
 
     async def pump(self):
         while not self.exiting:
             try:
-                self.tasks.drain(lambda: self.exiting)
+                changed = bool(self.tasks.drain(lambda: self.exiting))
                 if self.exiting:
                     return
                 if self.pending_ui and not self.dialog:
@@ -461,11 +493,14 @@ class Application:
                 if "editor" in self.sessions:
                     self.sessions["editor"].tick(now)
                 if "pdf" in self.sessions:
-                    self.sessions["pdf"].poll()
+                    self.graphics.tick()
+                    changed |= self.sessions["pdf"].poll() or self.graphics_revision != self.graphics.revision
+                    self.graphics_revision = self.graphics.revision
                 # Restore focus after a resize that temporarily hid the active control.
                 if not self.dialog and self.ui.layout.current_window not in self.ui.layout.find_all_windows():
                     self.focus_active()
-                self.ui.invalidate()
+                if changed:
+                    self.ui.invalidate()
             except Exception as error:
                 self.notify(f"Background operation failed: {type(error).__name__}: {error}")
             await asyncio.sleep(0.05)
@@ -493,6 +528,7 @@ class Application:
                 if self.store.config["history_persistence"]:
                     self.sessions["chat"].save_history(silent=True)
         self.closed = True
+        self.graphics.suspend(free=True)
         try:
             for key, session in self.sessions.items():
                 try:

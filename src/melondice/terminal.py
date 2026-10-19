@@ -1,4 +1,4 @@
-"""POSIX terminal restoration and Kitty presentation, independent of PDF rendering.
+"""POSIX terminal restoration, capability detection and coordinated presentation, independent of PDF rendering.
 
 Graphics support is actively queried while prompt_toolkit owns raw input. The input
 reader removes protocol replies before they can become composer/editor keystrokes.
@@ -11,6 +11,7 @@ import fcntl
 import os
 import re
 import secrets
+import shutil
 import struct
 import sys
 import termios
@@ -18,6 +19,9 @@ import time
 import zlib
 
 from prompt_toolkit.input.vt100 import Vt100Input
+
+from .graphics_presenters import KittyPresenter, SixelPresenter
+from .storage import parse_cell_pixels
 
 ESC = "\x1b"
 
@@ -37,72 +41,157 @@ class TerminalGuard:
 
 
 class Graphics:
-    def __init__(self, mode="auto"):
+    """Small shared controller over Kitty/Sixel presenters, with bounded probing."""
+    def __init__(self, mode="auto", cell_pixels=""):
         self.probe_id = secrets.randbelow(1_000_000_000) + 1
         self.image_id = self.probe_id + 1
         self.mode = mode
+        self.override = parse_cell_pixels(cell_pixels)
         self.started = False
         self.deadline = 0.0
+        self.geometry_deadline = 0.0
+        self.geometry_expired = False
+        self.settled = False
         self.acknowledged = False
-        self.cell = None
-        self.uploaded = None
-        self.placed = False
+        self.sixel_advertised = False
+        self.kitty_error = ""
+        self.cell = self.override
+        self.cell_source = 3 if self.override else 0
+        self.converter = shutil.which("img2sixel")
+        self.presenter = None
         self.reason = "Checking terminal graphics capability…"
         self.revision = 0
         self.grid = None
+        self.text_dirty = False
         if mode == "off":
-            self.reason = "Terminal PDF images disabled in Options."
+            self.reason = "Terminal PDF images disabled. Select auto, kitty or sixel in Options and restart."
         elif os.environ.get("TMUX") or os.environ.get("STY"):
-            self.mode = "off"
-            self.reason = "PDF images are disabled inside tmux/screen; use a direct SSH terminal."
-        elif os.environ.get("TERM", "") in {"linux", "dumb", "cons25"}:
-            self.mode = "off"
-            self.reason = "This console has no implemented Kitty graphics backend."
+            self.disable("PDF images inside tmux/screen are unsupported. Run in the terminal directly; text apps remain usable.")
+        elif mode == "sixel" and not self.converter:
+            self.disable("Sixel requires img2sixel (Debian package libsixel-bin) on PATH. Install it or correct PATH, then restart.")
+
+    @property
+    def placed(self):
+        return bool(self.presenter and self.presenter.placed)
+
+    @property
+    def protocol(self):
+        return self.presenter.name if self.presenter else None
 
     @property
     def supported(self):
-        return self.mode == "auto" and self.acknowledged and self.cell is not None
+        return self.mode != "off" and self.presenter is not None and self.cell is not None
+
+    @property
+    def encoding(self):
+        return self.protocol == "sixel" and self.presenter.future is not None
+
+    def viewport_pixels(self, columns, rows):
+        width, height = columns * self.cell[0], rows * self.cell[1]
+        if self.protocol == "sixel":
+            # Contain the final six-pixel band inside the reserved text region.
+            height -= height % 6
+        return width, height
 
     @property
     def description(self):
         if self.mode == "off":
             return self.reason
         if self.supported:
-            return "Kitty graphics confirmed (in-band PNG over the terminal connection)."
-        if self.started and time.monotonic() > self.deadline:
-            if self.acknowledged:
-                return "Kitty responded, but terminal cell pixel geometry is unavailable."
-            return "No Kitty graphics acknowledgement received. Use a compatible terminal for PDF images."
+            prefix = "Kitty PNG graphics confirmed" if self.protocol == "kitty" else "Sixel graphics selected (img2sixel, 256 colors)"
+            return f"{prefix}; cell {self.cell[0]}×{self.cell[1]} pixels."
+        if self.settled and self.presenter is None:
+            return self.reason
+        if self.started and self.cell is None and time.monotonic() >= self.geometry_deadline:
+            return "Terminal pixel geometry unavailable. Supply measured --pdf-cell-pixels WIDTHxHEIGHT (or pdf_cell_pixels in config), then restart. Font size alone is not cell geometry."
         return self.reason
+
+    def disable(self, reason):
+        self.mode, self.reason = "off", reason
+        self.suspend()
+        self.revision += 1
+
+    def _set_cell(self, width, height, source):
+        if 1 <= width <= 256 and 1 <= height <= 512 and source >= self.cell_source:
+            if self.cell != (width, height):
+                self.cell = width, height
+                self.revision += 1
+            self.cell_source = source
+
+    def _area_geometry(self, width, height):
+        if self.grid:
+            columns, rows = self.grid
+            # Whole text area only, never physical monitor/window dimensions.
+            # Reject non-integral geometry instead of accumulating placement drift.
+            if columns and rows and width % columns == 0 and height % rows == 0:
+                self._set_cell(width // columns, height // rows, 1)
 
     def begin(self, output):
         if self.mode == "off":
             return
         size = output.get_size()
         grid = size.columns, size.rows
-        if self.started:
-            if grid != self.grid:
-                self.grid = grid
-                output.write_raw(ESC + "[16t")
-                output.flush()
+        if self.started and grid == self.grid:
             return
-        self.grid = grid
-        self.started = True
-        self.deadline = time.monotonic() + 1.5
-        # Query the exact PNG transmission format we use, without displaying it.
-        png = b"\x89PNG\r\n\x1a\n"
-        for kind, payload in [(b"IHDR", struct.pack("!IIBBBBB", 1, 1, 8, 2, 0, 0, 0)),
-                              (b"IDAT", zlib.compress(b"\x00\xff\xff\xff")), (b"IEND", b"")]:
-            png += struct.pack("!I", len(payload)) + kind + payload + struct.pack("!I", binascii.crc32(kind + payload))
-        data = base64.b64encode(png).decode("ascii")
-        output.write_raw(f"{ESC}_Ga=q,i={self.probe_id},t=d,f=100;{data}{ESC}\\{ESC}[16t")
+        first = not self.started
+        self.grid, self.started = grid, True
+        self.cell, self.cell_source = self.override, 3 if self.override else 0
+        self.geometry_deadline = time.monotonic() + 1.5
+        self.geometry_expired = False
+        self.revision += 1
+        # Queries only on PDF entry and grid resize, never on the 50ms pump.
+        if not self.override:
+            output.write_raw(ESC + "[16t" + ESC + "[14t")
+            try:
+                rows, cols, width, height = struct.unpack("HHHH", fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, b"\0" * 8))
+                if (cols, rows) == grid and width and height:
+                    self._area_geometry(width, height)
+            except (OSError, ValueError):
+                pass
+        if first:
+            self.deadline = time.monotonic() + 1.5
+            if self.mode == "sixel":
+                self.presenter = SixelPresenter(self.converter)
+                self.settled = True  # Explicit choice trusts the user's known terminal.
+            else:
+                # Query the exact PNG transmission format, without displaying it.
+                png = b"\x89PNG\r\n\x1a\n"
+                for kind, payload in [(b"IHDR", struct.pack("!IIBBBBB", 1, 1, 8, 2, 0, 0, 0)),
+                                      (b"IDAT", zlib.compress(b"\x00\xff\xff\xff")), (b"IEND", b"")]:
+                    png += struct.pack("!I", len(payload)) + kind + payload + struct.pack("!I", binascii.crc32(kind + payload))
+                data = base64.b64encode(png).decode("ascii")
+                output.write_raw(f"{ESC}_Ga=q,i={self.probe_id},t=d,f=100;{data}{ESC}\\")
+                if self.mode == "auto":
+                    output.write_raw(ESC + "[c")  # Primary DA: feature 4 advertises Sixel.
         output.flush()
-        try:
-            rows, cols, width, height = struct.unpack("HHHH", fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, b"\0" * 8))
-            if rows and cols and width and height:
-                self.cell = (max(1, width // cols), max(1, height // rows))
-        except (OSError, ValueError):
-            pass
+
+    def tick(self):
+        if self.mode == "off" or not self.started:
+            return
+        if not self.geometry_expired and time.monotonic() >= self.geometry_deadline:
+            self.geometry_expired = True
+            self.revision += 1
+        if self.settled:
+            return
+        if self.acknowledged:
+            self.presenter = KittyPresenter(self.image_id)
+        elif time.monotonic() < self.deadline:
+            return
+        elif self.mode == "auto" and self.sixel_advertised and self.converter:
+            self.presenter = SixelPresenter(self.converter)
+        else:
+            if self.mode == "auto" and self.sixel_advertised and not self.converter:
+                self.reason = "Terminal advertises Sixel, but img2sixel is missing from PATH (Debian: libsixel-bin). Restart after installing it."
+            else:
+                self.reason = ("No positive Kitty PNG acknowledgement" + (f" ({self.kitty_error})" if self.kitty_error else "") +
+                               (" or Sixel advertisement" if self.mode == "auto" else "") +
+                               ". For a known Sixel terminal such as mlterm-fb, use --pdf-graphics sixel; otherwise use a compatible terminal or off.")
+            # Keep filtering late replies, but never switch the chosen backend later.
+            self.settled = True
+            self.revision += 1
+            return
+        self.settled = True
+        self.revision += 1
 
     def reply(self, text):
         if text.startswith(ESC + "_G"):
@@ -110,53 +199,46 @@ class Graphics:
             match = re.search(r"(?:^|,)i=(\d+)(?:,|$)", header)
             if match and separator:
                 identifier = int(match[1])
-                if identifier == self.probe_id:
-                    if payload == "OK":
-                        self.acknowledged = True
-                    else:
-                        self.mode = "off"
-                        self.reason = "Terminal rejected the Kitty PNG capability query: " + payload
-                    self.revision += 1
-                elif identifier == self.image_id and payload != "OK":
-                    self.mode = "off"
-                    self.reason = "Terminal rejected PDF image presentation: " + payload
-                    self.uploaded = None
-                    self.revision += 1
+                if identifier == self.probe_id and not self.settled and time.monotonic() <= self.deadline:
+                    self.acknowledged = payload == "OK"
+                    self.kitty_error = payload if payload != "OK" else ""
+                    self.tick()
+                elif identifier == self.image_id and self.protocol == "kitty" and payload != "OK":
+                    self.disable("Terminal rejected PDF image presentation: " + payload)
         else:
-            match = re.fullmatch(r"\x1b\[6;(\d+);(\d+)t", text)
-            if match:
-                height, width = map(int, match.groups())
-                if 1 <= width <= 256 and 1 <= height <= 512:
-                    self.cell = width, height
-                    self.revision += 1
+            match = re.fullmatch(r"\x1b\[([46]);(\d+);(\d+)t", text)
+            if match and self.started and time.monotonic() <= self.geometry_deadline:
+                kind, height, width = map(int, match.groups())
+                if kind == 6:
+                    self._set_cell(width, height, 2)
+                else:
+                    self._area_geometry(width, height)
+            match = re.fullmatch(r"\x1b\[\?([\d;]+)c", text)
+            if match and not self.settled and time.monotonic() <= self.deadline:
+                self.sixel_advertised = "4" in match[1].split(";")[1:]
+
+    def prepare(self, tasks, png, identity, changed):
+        if self.supported:
+            self.presenter.prepare(tasks, png, identity, changed, self.disable)
+
+    def suspend(self, free=False):
+        if self.presenter:
+            self.presenter.suspend(free=free)
 
     def hide(self, output, free=False):
-        if self.placed or (free and self.started and self.acknowledged):
-            action = "I" if free else "i"
-            output.write_raw(f"{ESC}_Ga=d,d={action},i={self.image_id},q=2{ESC}\\")
-            output.flush()
-        self.placed = False
-        if free:
-            self.uploaded = None
+        if self.presenter:
+            self.text_dirty |= self.presenter.hide(output, free=free)
 
     def show(self, output, png, identity, rectangle):
         if not self.supported:
             return
         x, y, columns, rows = rectangle
-        if min(columns, rows) <= 0:
+        size = output.get_size()
+        # Sixel has no portable clipping rectangle. Never send an out-of-bounds
+        # raster, and retain one text row below for cursor-origin Sixel terminals.
+        if min(columns, rows) <= 0 or min(x, y) < 0 or x + columns > size.columns or y + rows >= size.rows:
             return
-        if identity != self.uploaded:
-            data = base64.b64encode(png).decode("ascii")
-            for offset in range(0, len(data), 4096):
-                chunk = data[offset:offset + 4096]
-                more = int(offset + 4096 < len(data))
-                header = f"a=t,t=d,f=100,i={self.image_id},q=1,m={more}" if offset == 0 else f"m={more},q=1"
-                output.write_raw(f"{ESC}_G{header};{chunk}{ESC}\\")
-            self.uploaded = identity
-        # Save/restore the cursor so prompt_toolkit's renderer stays synchronized.
-        output.write_raw(f"{ESC}7{ESC}[{y + 1};{x + 1}H{ESC}_Ga=p,i={self.image_id},p=1,c={columns},r={rows},C=1,q=1{ESC}\\{ESC}8")
-        output.flush()
-        self.placed = True
+        self.presenter.show(output, png, identity, rectangle)
 
 
 class ReplyReader:
@@ -188,12 +270,16 @@ class ReplyReader:
                 self.graphics.reply(data[:end + 2])
                 data = data[end + 2:]
                 continue
-            match = re.match(r"\x1b\[6;\d+;\d+t", data)
+            match = re.match(r"\x1b\[(?:[46];\d+;\d+t|\?[\d;]+c)", data)
             if match:
                 self.graphics.reply(match.group())
                 data = data[match.end():]
                 continue
-            if any(prefix.startswith(data) for prefix in (ESC + "_G", ESC + "[6;")) or re.fullmatch(r"\x1b\[6;[\d;]*", data):
+            if (any(prefix.startswith(data) for prefix in (ESC + "_G", ESC + "[6;", ESC + "[4;", ESC + "[?"))
+                    or re.fullmatch(r"\x1b\[(?:[46];[\d;]*|\?[\d;]*)", data)):
+                if len(data) > 8192:
+                    data = data[1:]
+                    continue
                 self.pending = data
                 break
             result.append(data[0])
@@ -202,7 +288,7 @@ class ReplyReader:
 
     def flush_escape(self):
         # A user's bare Escape must still reach the key decoder after its normal timeout.
-        if self.pending and not self.pending.startswith(ESC + "_G") and not self.pending.startswith(ESC + "[6;"):
+        if self.pending and not self.pending.startswith(ESC + "_G") and not self.pending.startswith((ESC + "[6;", ESC + "[4;", ESC + "[?")):
             data, self.pending = self.pending, ""
             return data
         return ""

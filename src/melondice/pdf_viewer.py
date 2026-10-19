@@ -1,4 +1,4 @@
-"""PDF state/controller; MuPDF rasterization and Kitty presentation remain separate."""
+"""Shared PDF state/controller; rasterization and terminal protocols stay separate."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -39,6 +39,7 @@ class PDFViewer:
         self.open_path = None
         self.render_request = None
         self.inflight = None
+        self.inflight_document = None
         self.image = None
         self.image_key = None
         self.failed_key = None
@@ -53,7 +54,8 @@ class PDFViewer:
         self.viewport = Viewport(self)
         recent = HSplit([Label(text="Recent files — Up/Down select, Enter open"), self.recents,
                          Label(text=lambda: "\n" + app.graphics.description + "\nThe rest of Melon Dice remains usable.")])
-        self.container = HSplit([Label(text=self.heading),
+        # Busy/encoding status must not grow/shrink the raster's cell region.
+        self.container = HSplit([Label(text=self.heading, height=2),
                                 DynamicContainer(lambda: self.viewport if self.pages else recent),
                                 Label(text="F3 Open  F4 Outline  PgUp/PgDn Pages  G Go to page  +/- Zoom  Arrows Pan\n"
                                            "Esc Cancel pending operation  PDF is read-only; text copy/paste unavailable")])
@@ -62,7 +64,7 @@ class PDFViewer:
         return self.viewport if self.pages else self.recents
 
     def heading(self):
-        return f"pdfViewer | {self.path or 'No document'} | Page {self.page + 1 if self.pages else 0}/{self.pages} | {self.zoom:.0%} | Pan {self.pan_x},{self.pan_y}" + (" | Working…" if self.open_request or self.render_request else "")
+        return f"pdfViewer | {self.path or 'No document'} | Page {self.page + 1 if self.pages else 0}/{self.pages} | {self.zoom:.0%} | Pan {self.pan_x},{self.pan_y}" + (" | Encoding Sixel…" if self.app.graphics.encoding else " | Working…" if self.open_request or self.render_request else "")
 
     def desired(self):
         if not self.pages or not self.app.graphics.supported:
@@ -70,15 +72,27 @@ class PDFViewer:
         _x, _y, columns, rows = self.bounds
         if min(columns, rows) <= 0:
             return None
-        cell_width, cell_height = self.app.graphics.cell
-        return (self.page, self.zoom, self.pan_x, self.pan_y, columns * cell_width, rows * cell_height)
+        width, height = self.app.graphics.viewport_pixels(columns, rows)
+        if height < 1:
+            return None
+        return (self.page, self.zoom, self.pan_x, self.pan_y, width, height)
+
+    def visible(self):
+        size = self.app.ui.output.get_size()
+        return (self.app.active == "pdf" and not self.app.dialog and size.columns >= 80 and size.rows >= 24
+                and self.viewport in self.app.ui.layout.find_all_windows())
+
+    def display_identity(self):
+        if not self.failed and not self.error and self.image is not None and self.image_key == self.desired():
+            return id(self), self.document_id, self.image_key
+        return None
 
     def viewport_text(self):
         if self.failed:
             return "PDF renderer unavailable. Close and reopen pdfViewer.\n" + self.error
         if not self.app.graphics.supported:
             return ("Original-layout PDF images unavailable in this terminal.\n\n" + self.app.graphics.description +
-                    "\n\nUse a direct Kitty-graphics-compatible terminal with pixel geometry reporting.\n"
+                    "\n\nUse a compatible Kitty or Sixel terminal; mlterm-fb: --pdf-graphics sixel.\n"
                     "No GUI will be opened and no extracted-text imitation will be shown.\n"
                     "Home, ChatGPT, the text editor, file metadata, and outline remain available.")
         if self.error:
@@ -111,14 +125,16 @@ class PDFViewer:
             self.app.error("Cannot start PDF renderer", error)
 
     def poll(self):
+        changed = False
         if self.failed or self.backend is None:
-            return
+            return changed
         try:
             for sequence, kind, value in self.backend.receive():
+                changed = True
                 if kind == "startup_error":
                     self.failed, self.error = True, value
                     self.app.notify(value)
-                    return
+                    return True
                 if sequence == self.open_request:
                     self.open_request = None
                     if kind == "password":
@@ -142,7 +158,7 @@ class PDFViewer:
                     if self.cancelled_render:
                         self.cancelled_render = False
                         continue
-                    if self.inflight != self.desired():
+                    if self.inflight_document != self.document_id or self.inflight != self.desired():
                         continue
                     if kind == "rendered":
                         self.pan_x, self.pan_y = value["pan"]
@@ -156,14 +172,21 @@ class PDFViewer:
                 prompt(self.app, "PDF password", "Enter password (also shown after an incorrect password):",
                        lambda password: self.load(path, password), secret=True)
             desired = self.desired()
-            if (self.app.active == "pdf" and not self.app.dialog and not self.open_request and not self.render_request
+            if (self.visible() and not self.open_request and not self.render_request
                     and desired is not None and desired != self.image_key and desired != self.failed_key):
                 self.error = ""
                 self.inflight = desired
+                self.inflight_document = self.document_id
                 self.render_request = self.backend.send("render", *desired)
+                changed = True
+            identity = self.display_identity()
+            if self.visible() and identity is not None:
+                self.app.graphics.prepare(self.app.tasks, self.image, identity, self.app.ui.invalidate)
         except Exception as error:
             self.failed, self.error = True, str(error)
             self.app.notify(f"PDF renderer error: {error}")
+            changed = True
+        return changed
 
     def turn(self, amount):
         if self.pages and not self.open_request:
@@ -213,12 +236,20 @@ class PDFViewer:
                 self.failed_key = self.desired()
                 self.error = "Display update cancelled. Change zoom/page to request another render."
             self.app.notify("Pending display cancelled. The native renderer may finish its call in the background.")
+        elif self.app.graphics.encoding:
+            self.app.graphics.suspend()
+            self.failed_key = self.desired()
+            self.image, self.image_key = None, None
+            self.error = "Sixel encoding cancelled. Change page/zoom/pan to request another display."
+            self.app.notify(self.error)
 
     def present(self):
-        if self.image is not None and self.image_key == self.desired() and not self.error:
-            self.app.graphics.show(self.app.ui.output, self.image, (id(self), self.document_id, self.image_key), self.bounds)
+        identity = self.display_identity()
+        if identity is not None:
+            self.app.graphics.show(self.app.ui.output, self.image, identity, self.bounds)
 
     def close(self):
+        self.app.graphics.suspend(free=True)
         if self.backend:
             self.backend.close()
         self.app.graphics.hide(self.app.ui.output, free=True)

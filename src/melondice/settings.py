@@ -38,19 +38,32 @@ def settings(app):
             except (OSError, ValueError) as error:
                 app.error("Cannot save option", error)
         prompt(app, label, "Value:", apply, str(config[key]))
+    def graphics_mode():
+        modes = ["auto", "kitty", "sixel", "off"]
+        choose(app, "PDF graphics — restart applies", modes,
+               lambda i: save_option(app, "pdf_graphics", modes[i]))
+    def cell_pixels():
+        def apply(text):
+            try:
+                save_option(app, "pdf_cell_pixels", text.strip())
+            except (OSError, ValueError) as error:
+                app.error("Cannot save cell geometry", error)
+        prompt(app, "PDF cell pixels — restart applies", "Measured WIDTHxHEIGHT; empty queries terminal. Font size is not cell geometry:",
+               apply, config["pdf_cell_pixels"])
     choices = [
         ("ChatGPT account: " + app.accounts.status, lambda: account_menu(app)),
         ("Model: " + (config["model"] or "None selected"), lambda: models(app)),
         ("Default directory: " + config["document_directory"], set_directory),
         ("Theme: " + config["theme"], lambda: save_option(app, "theme", "light" if config["theme"] == "dark" else "dark")),
         (f"Mouse reporting: {config['mouse_support']}", lambda: save_option(app, "mouse_support", not config["mouse_support"])),
-        ("PDF graphics: " + config["pdf_graphics"] + " (restart applies)", lambda: save_option(app, "pdf_graphics", "off" if config["pdf_graphics"] == "auto" else "auto")),
+        ("PDF graphics: " + config["pdf_graphics"] + " (restart applies)", graphics_mode),
+        ("PDF cell pixels: " + (config["pdf_cell_pixels"] or "Query terminal") + " (restart applies)", cell_pixels),
         ("Keyboard shortcuts", lambda: shortcuts(app)),
         (f"Escape timeout: {config['escape_timeout_ms']} ms", lambda: number("escape_timeout_ms", "Escape timeout (50–2000 ms)")),
         (f"Persist chat history: {config['history_persistence']}", lambda: save_option(app, "history_persistence", not config["history_persistence"])),
         (f"Editor recovery autosave: {config['editor_autosave_seconds']} seconds", lambda: number("editor_autosave_seconds", "Recovery autosave (0 disables; 1–3600 seconds)")),
         (f"OAuth callback port: {config['callback_port']}", lambda: number("callback_port", "Loopback callback port (1024–65535)")),
-        ("Font size / Korean input (terminal-controlled)", lambda: message(app, "Terminal font and input", "Font family, size, and IME are controlled by your terminal/client environment. Melon Dice does not change them. Use UTF-8, Korean-capable client fonts, and a client input method. Bare Linux consoles have limited font/input support and no PDF graphics backend.")),
+        ("Font size / Korean input (terminal-controlled)", lambda: message(app, "Terminal font and input", "Font family, size, and IME are controlled by your terminal/client environment. Melon Dice does not change them. Use UTF-8, Korean-capable client fonts, and a client input method. Bare Linux consoles have no image protocol; run inside a compatible terminal such as mlterm-fb for Sixel PDF images.")),
     ]
     choose(app, "Melon Dice Options — changes save immediately", [label for label, _ in choices], lambda i: choices[i][1]())
 

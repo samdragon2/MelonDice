@@ -43,14 +43,17 @@ class Tasks:
         return future
 
     def drain(self, stop=None):
+        count = 0
         for _ in range(250):
             if stop and stop():
-                return
+                return count
             try:
                 callback, args = self.events.get_nowait()
             except queue.Empty:
-                return
+                return count
             callback(*args)
+            count += 1
+        return count
 
     def close(self):
         if self.closed:

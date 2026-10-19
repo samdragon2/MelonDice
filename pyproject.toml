@@ -17,6 +17,8 @@ dependencies = [
   "Pillow>=10.4,<13",
   "PyMuPDF>=1.24.10,<2",
 ]
+# Optional system executable for Sixel presentation: img2sixel (libsixel-bin).
+# Not a pip dependency; Kitty presentation does not require it.
 
 [project.scripts]
 melondice = "melondice.cli:main"

@@ -12,5 +12,8 @@ Melon Dice: copyright 2026 SamRyong, **GNU AGPL version 3 or later**. Full terms
 | cryptography | Signature primitives | [Apache-2.0 OR BSD-3-Clause](https://cryptography.io/en/latest/faq/#what-license-is-cryptography-distributed-under) |
 | Pillow | Attachment validation and in-memory PDF viewport PNG encoding | [HPND/Pillow terms](https://pillow.readthedocs.io/en/stable/about.html#license) |
 | PyMuPDF / MuPDF | PDF parsing and original-layout rasterization | [AGPL-3.0 or commercial](https://pymupdf.readthedocs.io/en/latest/about.html) |
+| libsixel / img2sixel (optional, external) | PNG-to-Sixel display encoding | [MIT](https://github.com/saitoha/libsixel/blob/master/LICENSE) |
 
 Dependencies are installed separately and retain their own/transitive license files. Bundled redistribution must include the required notices/source. The project retains an AGPL-compatible license because of its PDF backend. No GUI toolkit, terminal emulator, font, browser, or dependency binary is bundled. The Kitty graphics protocol is implemented as a terminal transport; it does not embed the Kitty application.
+
+Sixel presentation invokes the separately installed `img2sixel` executable using pipes; libsixel and mlterm are not bundled. On Debian this executable is provided by `libsixel-bin`. MuPDF command-line tools are not used by the application; PyMuPDF remains required for its PDF worker.
