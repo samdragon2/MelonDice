@@ -1,94 +1,73 @@
-# PDF navigation, retained display and installation — development report
+# Melon Dice 개발 보고서
 
-Date: 2026-10-19. Project: Melon Dice 0.2.0. Current branch: `pdfattach`.
+기록일: 2026-10-20. 현재 베타 리비전: **0.3.0**. 이번 범위는 `pdfattach`의 로컬 Git 통합, 사용자 문서, 버전 메타데이터 정리입니다. 새 애플리케이션 기능은 구현하지 않았습니다.
 
-## Scope and source review
+## 이번 문서·버전 변경
 
-Read `Melon Dice.txt` first, then `SPEC.md`, `README.md`, the previous development report, and the PDF viewer/backend, presenters, graphics controller, UI render hooks/bindings and task dispatch. Inspected repository/ancestor locations for applicable `AGENTS.md`; none was present. Reviewed the locally available pinned prompt_toolkit 3.0.52 wheel's render hooks, screen diff/erasure, style/size invalidation and output flushing as source, without importing or executing the application. The PDF task began with a clean checkout. The installation follow-up preserved those uncommitted PDF edits. Worked on the existing branch; no commit, branch switch, merge or push was performed.
+- `Melon Dice.txt` 원본을 먼저 읽고 SPEC, README, 이전 개발 보고서, 패키지 메타데이터 및 설치기·bootstrap·런처·CLI·설정·저장소·앱 키 바인딩/렌더 훅·PDF backend/viewer·Kitty/Sixel presenter·터미널 기하·채팅/인증/첨부·편집기 소스를 대조했습니다. 적용 범위의 저장소 및 상위 경로에서 `AGENTS.md`는 발견되지 않았습니다. 원본 `Melon Dice.txt`는 기존부터 Git 제외 대상이며 추가하지 않았습니다.
+- README를 한국어 실사용 안내로 재작성했습니다. 소개·베타 상태, 기능, 환경, Pi 설치, 실행·업데이트, 조작, 설정, 문제·한계, 라이선스, 간단한 버전 이력 순서입니다. 개발 컴퓨터의 고정 경로/IP와 rsync·pdfattach 기반 배포 절차, 미커밋 전달 안내를 제거했습니다.
+- `https://github.com/samdragon2/MelonDice.git`의 `main` clone, Pi의 시스템 도구·Python 3.10+/venv/pip, 일회 설치와 PATH/새 로그인, 종료 후 pull 및 설치기 재실행을 안내했습니다. 별도 설치 환경 때문에 Git pull만으로 앱이 갱신되지 않음을 명시했습니다. 원격 main 게시 전 설치기 부재 가능성도 구분했습니다.
+- 새 터미널 준비와 앱 설치를 구별하고, 기존 정상 mlterm 재빌드가 불필요함을 적었습니다. mlterm 3.9.5 공식 framebuffer/빌드 안내 및 소스 옵션을 읽고 `--with-gui=fb`, 로컬 prefix 빌드 예시, 글꼴/fontconfig, 별도 `libsixel-bin`을 안내했습니다. 이 빌드를 실행하거나 Pi의 OS·장치 권한을 바꾸지 않았습니다.
+- 일반 런처의 콘솔/기존 터미널/SSH 경로를 구현 의도로 설명했습니다. 실제 코드의 고정 mlterm 인수(`--aafont=true --fontsize=24 --fg=white --bg=black`)를 확인하여 기존 사용자 인수를 자동 보존한다는 오래된 README 주장을 제거했습니다.
+- Kitty/Sixel/off/auto, 측정한 문자 셀 기하, CLI 우선순위, XDG 설정·앱 데이터와 설치 환경 위치, 사용자 지정 data-dir의 별도 설정, 브라우저 인증·SSH callback 한계, 주요 단축키를 소스와 대조했습니다. 화면 캡처는 앱 외부 작업이며 QR/직접 ID·비밀번호/휴대 인증 개선/UI 숨기기를 구현 기능으로 소개하지 않았습니다.
+- `pyproject.toml`, `src/melondice/__init__.py`, README 및 SPEC의 현재 버전을 **0.3.0**으로 맞췄습니다. CLI `--version`과 Information은 해당 `__version__`을 참조하므로 소스 수준에서 일관됩니다. 출력은 실행하지 않았습니다. SPEC의 런처 설명과 검증 경계도 최신 관찰에 맞췄습니다.
 
-This is a focused terminal TUI change. The fixed two-row heading remains a `Window(FormattedTextControl(...), height=2)`, preserving the earlier correction for the unsupported `Label(height=...)` argument. No screenshot/image clipboard/PDF editing/export/GUI/authentication feature was added. No mlterm installation or OS display settings were changed.
+## 버전 선택 근거
 
-## User observations — not developer checks
+기존 Git 이력에서 프로젝트 버전은 **0.2.0**으로 확인됩니다. 원래 TUI 이후 Sixel 지원, 페이지 이동·이전 표시 유지, 설치기·일반 런처 작업이 이 번호 아래 축적되었습니다. 이번 main 통합의 사용자 영향 범위를 구별하기 위해 X를 2에서 3으로 올려 **0.3.0**을 선택했습니다. 베타의 정확한 `0.X.0` 형식을 유지하며 버전을 낮추지 않았습니다. README의 실제 과거 번호 0.2.0은 유지했고 새 과거 버전·릴리스 날짜·게시된 릴리스는 만들지 않았습니다. 태그나 GitHub 게시를 의미하지 않습니다.
 
-The user reports a black waiting interval during PDF updates and a keyboard without PageUp/PageDown. The target is a Raspberry Pi 5 running Raspberry Pi OS Lite / Debian 13 Trixie, aarch64, with a directly connected keyboard/HDMI monitor and mlterm 3.9.5 built for the framebuffer backend at `$HOME/.local/bin/mlterm-fb`. The user previously displayed a mutool-rendered PDF through img2sixel on that hardware. These observations establish the external pipeline, not this application's revised lifecycle or flicker behavior. The earlier viewer construction failure was reported separately and its fixed-height Window correction is preserved.
+## 기존 구현의 개발 이력
 
-## Changes
+다음은 통합할 기존 커밋·이전 보고서의 기록이며 이번 작업에서 기능을 새로 구현한 내역이 아닙니다.
 
-- Added literal `< Previous / > Next`, usually Shift+comma / Shift+period. Kept PageUp/PageDown aliases, arrows, zoom and G. PDF viewing bindings require an open document, focused viewport and no dialog. Page changes clamp to document bounds; a clamped no-op does not reset pan. Chat/editor/path/search/password/dialog input is outside that filter. Updated visible hints, README and SPEC.
-- Separated requested viewport state, the single native in-flight request, completed replacement PNG, asynchronous encoding/ready output, and the last actually placed frame. A frame becomes Displayed only after the presenter successfully sends it; a cached raster/encoding alone does not count. Displayed and Requested page/zoom/pan are shown separately, including during failures/cancellation.
-- For same-document page/zoom/pan changes with unchanged bounds/pixel geometry, kept the prior valid picture through rasterization and encoding. Removed the dependence of display identity on matching the current request or having no error. Kept image-region text invariant so ordinary prompt_toolkit text diffs cannot erase it. Loading, encoding, errors and cancellation appear outside the viewport in the fixed two-row heading/notification area. Long paths/status text clip horizontally rather than resizing the viewport.
-- Split Sixel ready output from the displayed encoding. Replacement picture-cell erasure and the already completed DCS share one buffered flush; no standalone clear/flush occurs while replacement work is pending. Same-bounds replacement does not trigger a full-screen text repaint. Kitty also tracks actual placement and skips unchanged placement rather than hiding on every text redraw.
-- Navigation revisions/document identity reject obsolete native results, including a request changed away and back. One native raster operation remains outstanding; later destinations coalesce. Obsolete encoding is cancelled immediately on a new request and generation checks reject raced callbacks. The displayed frame plus one necessary replacement are retained, with no page cache.
-- Render/converter failure preserves the previous valid visible picture where safe, reports outside the image and blocks automatic retries for that request. Converter failure no longer disables the graphics protocol globally; changing page/zoom/pan retries. Native worker failure explains that pdfViewer must be closed/reopened. Esc drops the pending replacement, cancels encoding and rejects a native result that may finish later, preserving an existing safe picture and leaving Requested metadata explicit.
-- Overlays, Home/app switches, document replacement and close erase the picture and discard display/replacement buffers; returning renders the session's requested viewport again. Resize, cell geometry, style/color-depth changes, framework full repaint and post-layout bound changes use cleanup/repair paths. All protocol output remains on the UI/lifecycle thread; the captured converter process never writes to the terminal. Existing terminal guard, cursor/mode restoration, session controllers and worker cleanup remain in place.
-
-## Follow-up: one-time installation and plain `melondice` launch
-
-Added `scripts/install.py`, the installed stdlib bootstrap `scripts/launcher_bootstrap.py`, a generated shell wrapper template `scripts/melondice-launcher.sh`, and `src/melondice/launcher.py`. Read the existing CLI, configuration persistence/locks, packaging, static audit and current documentation before implementing this follow-up. No installer, launcher, venv creation, pip/package operation, terminal or app was executed by the developer.
-
-- **One-time install:** `python3 scripts/install.py --profile pi` from the copied source tree, as the regular user without sudo. It installs an executable `~/.local/bin/melondice`; the private environment is automatic and requires no activation. Normal subsequent launch is only `melondice`.
-- **Explicit updates:** rerun `python3 scripts/install.py` after closing the app and copying updated source. Package installation and `pip check` exist only in this installer; they were not run during development. A staged owned environment is selected only after those steps succeed. An exclusive install lock prevents updating managed running sessions; the app's default data lock protects saved configuration. Old environments are pruned only when their ownership marker matches. Package failure leaves the previous environment selected; multi-file publication is not fully transactional and filesystem failures may require rerunning.
-- **PATH/collision handling:** managed guarded PATH blocks support Bash, Zsh and POSIX shells, preserve unrelated text and avoid repeated block insertion/prefixing. The installer prints the one-time current-shell export/new-login instructions. Symlinked shell files or other shells use explicit manual PATH setup and `--no-path-setup`. SHA-256 ownership records and final-symlink refusal prevent overwriting unrelated/modified executables at the requested launcher location.
-- **Saved preferences:** new Pi configuration writes Sixel only when no `pdf_graphics` key exists. Existing auto/Kitty/Sixel/off choices, geometry and all unrelated data remain; an explicit installer `--pdf-graphics` deliberately changes that preference. Existing application CLI arguments are forwarded unchanged. Updates preserve the installed profile and custom mlterm path by default.
-- **Context routing:** auto first-install profile uses the device-tree Raspberry Pi model, with explicit pi/terminal profile selection available. Runtime framebuffer startup requires actual local Linux VT device identity, matching controlling tty and foreground process group. SSH environment/sshd/mosh ancestry prevents local framebuffer startup; PTYs and existing mlterm executable ancestry run directly regardless of TERM. The installation-specific `MELONDICE_FB_SESSION` marker prevents recursion; a marker on a bare VT fails clearly.
-- **Dedicated terminal:** start the existing mlterm-fb with an argument array and `-e` for the installed Python/module, with no shell or injected init string. The supervisor holds the installation lock while mlterm runs. Intended normal exit closes that dedicated session and returns to the original console; app exit inside an existing terminal leaves that terminal open. No mlterm build/install or OS display changes were made.
-- **Startup boundary:** the shell wrapper/stdlib bootstrap locks and locates the selected environment, then executes its installed launcher. The launcher checks saved settings/dependency presence and routes to the TUI. No installation/update/network-update code runs during ordinary launch. Missing interpreter, bootstrap/environment/settings, installed Python dependencies and mlterm paths produce repair guidance. The source checkout is needed for updates, not routine launch.
-
-Reviewed the `-e` argument-vector and working-directory handling in [upstream mlterm configuration source](https://raw.githubusercontent.com/arakiken/mlterm/master/uitoolkit/ui_main_config.c) and the [Debian mlterm command reference](https://manpages.debian.org/testing/mlterm/mlterm.1.en.html). This is documentary source inspection, not inspection/execution of the user's installed 3.9.5 binary. Actual child lifetime, console return, framebuffer permissions/fonts and signal behavior still require user verification.
-
-## Checks actually performed
-
-Only source/static checks were performed; application modules were not imported or executed.
-
-| Check | Actual result |
+| 커밋 | 내용 |
 | --- | --- |
-| `python3 -X pycache_prefix=/private/tmp/melondice-bytecode -m compileall -q src scripts` | Passed; compiled 18 source modules and 3 tooling scripts, bytecode outside the checkout. |
-| `/opt/homebrew/bin/python3 -B scripts/static_check.py` | Passed; Python 3.10 grammar/code-object compilation, symbols/local import paths, entry point, dependency/config/mode consistency, excluded GUI/Ctrl+P scan, required artifacts and whitespace; now also parses/compiles/audits installer and bootstrap source without executing them. |
-| Pyflakes 3.4.0 over `src` and `scripts` using the pre-existing wheel under `/private/tmp/melondice-source-audit` | Passed with no diagnostics; no installation or application import. |
-| `sh -n scripts/melondice-launcher.sh` and syntax-only parsing of statically substituted wrapper/PATH snippets | Passed; shell bodies were not executed. |
-| `git diff --check` | Passed. |
-| Source/diff and pinned framework source review | Reviewed key-filter scope; requested/in-flight/ready/placed transitions; native revision/document and converter generation rejection; cancellation/failure; bounded buffers; render-hook damage handling; ECH/DCS flush ordering; protocol-specific cleanup and UI-thread ownership. This is static reasoning, not runtime evidence. |
+| `d0b9234` | 0.2.0 터미널 TUI 기반: Home/ChatGPT/PDF/편집기, retained sessions, 내부 텍스트 클립보드, 설정·복구·인증 어댑터 |
+| `9c276f4` | mlterm-fb용 Sixel PDF presenter, 외부 img2sixel encoding, 그래픽 선택 및 셀 기하·설정 확장 |
+| `35fc825` | PDF 헤더 초기화 문제 수정; 지원하지 않는 Label height 대신 고정 높이 Window 사용 |
+| `b0e570f` | `<`/`>` 및 PageUp/PageDown 이동, Displayed/Requested 분리, 같은 표시 기하에서 이전 화면 유지; 설치기·bootstrap·일반 런처도 이 시점의 트리에 포함 |
 
-No installer/bootstrap/launcher execution, package installation, Melon Dice launch, graphics probe, rendering/conversion experiment, login/inference request, unit/integration/functional/end-to-end test, screenshot, screen sharing or remote viewing was performed or requested. No dependencies were installed. Compilation/static success does not establish runtime behavior on the Pi.
+PDF 상태는 요청·native 작업·대체 raster/encoding·실제 표시 프레임을 분리합니다. 최신 요청만 수락하고 오래된 native/encoding 결과를 거부하며 표시 프레임과 필요한 대체 프레임을 유지합니다. 같은 영역의 Sixel 교체는 완성된 출력과 picture-cell 지우기를 한 flush에 묶습니다. 실패·취소 시 안전한 이전 그림을 남기고 상태를 그림 밖에 표시합니다. 메뉴·앱 전환·새 문서·geometry/damage 변경은 지우기·재렌더링 경로를 사용합니다. 완전한 무깜박임이나 원자적 Sixel 교체를 보장하지 않습니다.
 
-## Remaining limitations
+기존 설치기는 사용자 전용 환경을 준비하고 의존성 설치/검사가 성공한 뒤 선택합니다. 소유권 기록·잠금으로 관련 없는 실행 파일과 실행 중인 관리 세션을 보호하고 설정·프로필을 보존하도록 구현되어 있습니다. bootstrap은 환경을 찾고 잠금을 유지하며, 런처는 실제 Linux VT·SSH/프로세스 조상·PTY를 구별합니다. 시작 중 pip/업데이트/환경 생성은 하지 않습니다. 이 동작들은 이번 작업에서 실행하지 않았습니다.
 
-- Installer/bootstrap/context detection/PATH/update behavior is source-reviewed only. No installation, launch or repair scenario was executed, including `--help`. User verification is required on the Pi and its Bash login environment. Custom/symlinked shell startup files require manual PATH management. An explicit one-time PATH export or a new terminal/login is necessary; no child installer can alter the calling shell.
-- Installation relies on a working system Python 3.10+, venv/pip/CA certificates, available package wheels/build prerequisites, and the user's existing mlterm-fb/img2sixel. It reports missing prerequisites without using sudo or installing OS packages. Normal launch relies on the selected system Python/environment remaining at their installed paths. A new Pi Sixel preference does not establish Sixel support for an SSH client's terminal.
-- The package/environment selection is staged, but shell/config/launcher publication is not one cross-file transaction. Permission/disk errors during publication can require repair by rerunning the installer. Installer ownership/locks protect managed app sessions and internal resources; arbitrary manual use of internal environments is outside that lifecycle.
+이전 보고서는 compileall, 저장소 정적 감사, 기존 Pyflakes 3.4.0 wheel을 이용한 lint, shell 구문 검사, pinned prompt_toolkit 3.0.52 렌더/출력 소스 검토를 통과했다고 기록했습니다. 이는 **이전 작업의 기록**이며 아래의 이번 실제 검사와 구별합니다. 이전 보고서 전체와 세부 구현 diff는 기존 Git 이력에 보존됩니다.
 
-- All revised runtime behavior awaits the user's verification, especially physical mlterm-fb picture-cell retention/erasure, text diff interactions, clipping, cursor/DECSDM restoration, child cleanup and performance.
-- Sixel has no universal atomic swap. Combining erasure and finished output in one flush removes the avoidable rasterization/encoding wait after a clear, but terminal parsing/transmission may still show replacement artifacts or flicker. Zero flicker is not claimed.
-- Terminal output transmission is serialized on the UI thread and may briefly block input. No Pi latency/CPU/memory measurements were taken. Existing 12 MP viewport and 128 MiB encoded-output limits still apply; the retained display plus replacement uses more memory than one frame, but no pages accumulate in a cache.
-- Native rasterization cannot be individually interrupted; cancelled/obsolete native work may finish before its result is discarded. Converter cancellation still requires OS process termination/reaping. Uncatchable termination/power loss cannot guarantee cleanup.
-- Overlays/switches intentionally discard images and may require rasterization/encoding on return while preserving document/page/zoom/pan session state. Geometry/damage repair can expose a cleared region. A request stopped by failure/cancellation requires changing page/zoom/pan to retry; native-worker failure requires close/reopen.
-- Existing Sixel palette reduction, six-pixel height bands, compatible text/graphics erasure requirement, terminal geometry discovery/override requirements, unsupported tmux/screen and bare-console images remain. No new installation or hardware compatibility claim is made.
+## 사용자 하드웨어 관찰과 검증 경계
 
-## Manual verification checklist — for the user, not performed by the developer
+**사용자 확인:** 물리 Pi에서 외부 PDF → PNG → img2sixel → mlterm-fb 파이프라인으로 PDF가 표시되었습니다. 이후 Melon Dice 안에서도 PDF 페이지 전환 및 업데이트 중 이전 페이지 유지가 작동했다고 확인했습니다. 알려진 환경은 Pi 5 / Raspberry Pi OS Lite·Debian 13 Trixie aarch64, framebuffer backend mlterm 3.9.5입니다. 이는 개발자의 실행 결과가 아닙니다.
 
-After one-time installation, run `melondice`; the Pi launcher enters mlterm-fb from the bare console or uses an existing mlterm-fb session. Use the current installation instructions in README. Explicit graphics overrides remain optional. No mlterm reinstall or OS display change is part of this update.
+**아직 미확인:** 일반 `melondice` 런처 성공. 최신 보고는 `~/.local/bin/melondice` 파일 누락입니다. PATH 수정만으로 파일이 생성되거나 문제가 해결되었다고 주장하지 않습니다. 설치/repair·자동 mlterm 진입·기존 터미널 유지·콘솔 복귀의 실제 성공, 로그인·추론, 성능·메모리·복원·호환성의 포괄 검증도 확인되지 않았습니다. 휴대 인증 개선과 UI 숨기기는 구현되지 않았습니다.
 
-- [ ] **Startup/navigation:** Open a multi-page PDF. Confirm the heading constructs successfully and `< Previous / > Next` is visible. Use literal Shift+comma/Shift+period, optional PageUp/PageDown, G and outline. Repeated `<` at page 1 and `>` at the final page must clamp without resetting a panned view on a no-op.
-- [ ] **Input scope:** Type `<` and `>` in the chat composer, editor, file-path/search inputs and password/other dialogs. Confirm normal input and no PDF page movement. Check PDF viewing controls only act with the viewing surface focused; recent-file arrows/Enter still work before opening a document.
-- [ ] **Waiting interval/metadata:** From a successfully displayed page, request a different page that takes noticeable time. Verify the previous picture remains during native work and Encoding Sixel, the displayed page/zoom/pan remains accurate, the requested destination/status is separate, and the replacement appears promptly after completion. Assess any brief transmission artifact separately from the former blank waiting interval.
-- [ ] **Rapid navigation:** Repeat and alternate `<`/`>` rapidly, including away and back to a prior destination, then mix G/outline and zoom/pan. Confirm the final destination wins; no obsolete intermediate completion replaces it, pages do not accumulate in retained buffers, and the UI remains usable.
-- [ ] **Zoom/pan/idle redraw:** Exercise +/− to both limits and all arrows at page edges. Verify the old image remains during each pending update, aspect ratio/bounds stay correct and heading changes do not move the viewport. Stay idle and trigger ordinary status/text updates; assess absence of periodic erase/retransmit/full-screen redraw.
-- [ ] **Failure:** With a valid image visible, exercise a replacement render/encoding failure using a safe local disposable setup if available. Confirm the old image remains where safe, the requested page is not reported as Displayed, errors stay outside the image, there is no automatic retry loop, and a changed page/zoom/pan can retry after the cause is corrected. Check failed worker close/reopen guidance separately.
-- [ ] **Cancellation:** Press Esc during native rasterization, encoding and ready-but-not-yet-presented work where timing permits. Verify the prior picture survives where safe, cancellation and Requested metadata remain clear, no late result appears, and subsequent changed navigation works. Also cancel before the first picture and cancel a pending file/password open; no false Displayed page should appear.
-- [ ] **Overlays:** Open/dismiss Options, Information, file picker, G, outline and password/error dialogs while a PDF is visible or updating. Confirm picture removal before dialog text, correct cursor/focus, no fragments over dialogs, cancellation of obsolete pending display work and correct requested viewport on return.
-- [ ] **App/session switching:** While idle and while updating, use F1 Home and Alt+Tab/F6. Confirm no image remains on Home/chat/editor, no hidden completion paints there, and the PDF's document/requested page/zoom/pan resumes correctly. Check chat draft/streaming/scroll and editor unsaved buffer/cursor/undo still persist.
-- [ ] **Document replacement:** Open another PDF with the same viewport dimensions, including a password-protected file and a failed/cancelled open. Confirm no previous-document picture or stale completion is presented as the new document; failed/cancelled opens preserve committed session state.
-- [ ] **Resize/damage:** Resize wider/narrower/taller/shorter, below 80×24 and back, and request a normal terminal repaint if supported. Verify cleanup, geometry refresh, bounds/clipping and focus recovery. No old-size/old-position raster may cover controls; a clear/repaint is acceptable here. Verify a long filename/error does not change the heading height.
-- [ ] **Close/exit:** Close/reopen pdfViewer while work is pending; then exercise guarded full exit/cancel and actual exit. Verify child cleanup, no image remnants, cursor/echo/raw/canonical/flow-control/mouse/alternate-screen restoration and usable shell. Preserve unsaved editor/chat decisions.
-- [ ] **Kitty regression:** On a Kitty-capable terminal, exercise page/rapid input/zoom/pan/loading/failure/cancellation/overlays/switches/resize/exit with explicit Kitty and auto. Confirm correct PNG placement/deletion and no idle retransmission. Check explicit Sixel remains selected on the Pi and off/unsupported graphics still gives an actionable text explanation.
+## 이번에 실제 수행한 검사
 
-## Installation/launch manual checklist — for the user, not performed by the developer
+아래는 이번 작업에서 실제 통과한 소스 전용 검사입니다. 애플리케이션 모듈을 import하거나 실행하지 않았습니다.
 
-- [ ] **First install:** Copy source to the Pi and run `python3 scripts/install.py --profile pi` without sudo. Confirm dependencies install on aarch64, the executable launcher is created, the new Pi config saves Sixel and the installer gives actionable prerequisite errors. Do not activate an environment.
-- [ ] **PATH/reinstall:** Use a new login/terminal or the printed one-time PATH export, then type only `melondice`. Confirm repeating the installer does not duplicate managed PATH blocks and does not reset saved preferences/data. Check `.local/bin` resolves to the managed launcher. For symlinked dotfiles, verify clear refusal and use manual PATH plus `--no-path-setup` if needed.
-- [ ] **Bare console:** From the directly connected Pi VT, `melondice` should start exactly one existing mlterm-fb session and the app. Verify fonts, keyboard, PDF Sixel default and geometry. Exit normally from Home and confirm return to the original console with working cursor/echo/terminal modes.
-- [ ] **Existing mlterm:** In an independently opened mlterm-fb, with no launcher marker, type `melondice`. Confirm no nested terminal; normal app exit leaves the existing mlterm shell open. Check the same behavior when TERM is xterm or otherwise differs from the bare console.
-- [ ] **SSH/context:** Through interactive SSH, type `melondice`; no local framebuffer terminal may start. Confirm direct text UI, appropriate explicit graphics overrides for the remote terminal and correct return to SSH. Existing other PTYs/serial terminals must not start a framebuffer session. Help/version should not start a terminal.
-- [ ] **Arguments/preferences:** Verify existing saved auto/Kitty/off choices survive installation/update, a new Pi preference defaults to Sixel, explicit one-time `--pdf-graphics` installer choice saves it, and runtime `--pdf-graphics`, `--pdf-cell-pixels` and `--data-dir` arguments still work, including paths with spaces. An installed custom mlterm path/profile should survive an update without repeating options.
-- [ ] **Update/locks/failure:** With the app or its dedicated terminal active, the installer should refuse an update. Close it, copy updated source and rerun the installer; saved sessions/data/configuration should remain. A package/dependency failure must leave the old environment selected. Check a retry after a missing prerequisite/failed first install, and verify ordinary launches perform no package/network update or environment recreation.
-- [ ] **Collision/repair:** In a safe disposable setup, verify an unrelated executable/symlink at the launcher path is refused rather than overwritten. Check clear errors for missing system Python, bootstrap, selected environment, settings, Python dependency or mlterm path. Repair with the installer after correcting the cause. Verify normal launch still works if the original source directory is moved away, without modifying internal installation files.
+| 검사 | 결과 |
+| --- | --- |
+| `python3 -X pycache_prefix=/private/tmp/melondice-bytecode -m compileall -q src scripts` | 통과. 시스템 Python 3.9.6으로 구문/bytecode 컴파일만 수행하고 결과는 checkout 밖에 기록했습니다. Python 3.10 런타임 검증은 아닙니다. |
+| `/opt/homebrew/bin/python3 -B scripts/static_check.py` | Python 3.14.7에서 통과. 18개 소스 모듈·3개 도구 스크립트를 Python 3.10 grammar로 AST 파싱/코드 객체 컴파일, 심볼·로컬 import·의존성/메타데이터·진입점·JSON 필드·그래픽 모드·필수 문서·공백 정적 감사했습니다. |
+| `sh -n scripts/melondice-launcher.sh` | 통과. shell 본문은 실행하지 않았습니다. |
+| `/opt/homebrew/bin/python3 -B /private/tmp/melondice-doc-audit.py` | 통과. AST/TOML로 0.3.0 및 기존 0.2.0보다 증가함을 확인, 현재 문서 버전·로컬 Markdown 링크·CLI/설치기 옵션과 스크립트 경로 대조, README의 shell 블록 9개를 `sh -n`으로 구문 검사했습니다. 문서 명령은 실행하지 않았습니다. 일회용 감사 스크립트는 저장소에 추가하지 않았습니다. |
+| `git diff --check` 및 최종 diff 검토 | 통과. 변경 범위는 README·개발 보고서·SPEC 및 두 버전 값입니다. |
+
+- 소스 읽기와 Git 상태·커밋·메타데이터·옵션/단축키·설정 경로 대조를 수행했습니다.
+- 공식 mlterm 3.9.5 [framebuffer 안내](https://raw.githubusercontent.com/arakiken/mlterm/3.9.5/doc/en/README.fb), [README](https://raw.githubusercontent.com/arakiken/mlterm/3.9.5/README), [configure 소스](https://raw.githubusercontent.com/arakiken/mlterm/3.9.5/configure.in), [Debian libsixel-bin 패키지 안내](https://packages.debian.org/trixie/libsixel-bin)를 읽었습니다. 이는 설치된 바이너리나 빌드의 실행 검사가 아닙니다.
+
+애플리케이션·설치기·bootstrap·런처를 실행하지 않았고 `--help`/`--version`도 실행하지 않았습니다. 패키지 설치, graphics probe, PDF 변환 실험, 로그인·추론, unit/integration/functional/end-to-end 테스트를 수행하지 않았습니다. 화면 미러링·공유·원격 보기·스크린샷을 요청하거나 수행하지 않았습니다. 실제 실행과 런타임 테스트는 사용자만 수행합니다.
+
+## Git 통합 및 게시 상태
+
+시작 시 `pdfattach` HEAD는 `b0e570f`, 로컬 `main`과 로컬에 기록된 `origin/main`은 `d0b9234`였습니다. 작업 트리는 깨끗하여 포함할 기존 미커밋 변경이 없었습니다. `main`은 `pdfattach`의 조상이므로 fast-forward가 가능합니다. 기존 제외 파일인 `.venv`, egg-info, bytecode 및 `Melon Dice.txt`는 추가하지 않습니다.
+
+문서·버전 커밋 후 main에 fast-forward 통합할 예정입니다. 완료 후 이 부분에 실제 커밋·통합 결과와 최종 브랜치를 기록합니다. 원격을 fetch/push하지 않았으므로 origin 추적 ref는 로컬에 이미 저장된 상태만 나타냅니다. GitHub 게시와 main push는 별도 단계입니다.
+
+## 남은 이슈와 사용자 확인 항목
+
+- [ ] 누락된 일반 런처 문제: Pi의 설치 오류·실행 파일 생성·PATH 활성화 후 일반 실행. 성공은 아직 확인되지 않았습니다.
+- [ ] 새/기존 mlterm, bare console, SSH에서 실행·종료·콘솔 복귀, 업데이트 잠금·repair·설정 보존.
+- [ ] 유효한 geometry 및 글꼴 변경 후 재측정, Kitty/Sixel 별 표시·정리, 창 크기·메뉴·앱 전환·실패·취소 후 복원.
+- [ ] 빠른 페이지/확대/패닝 입력과 stale 결과 거부, 그림 경계·클리핑·잔상, 입력 지연·CPU·메모리·장시간 사용. 사용자의 페이지 전환/이전 표시 유지 확인이 이 전체 목록을 검증한 것은 아닙니다.
+- [ ] 현재 브라우저 인증과 headless Pi callback, 계정별 모델·권한·실제 요청. QR/직접 비밀번호/휴대 인증 개선/UI 숨기기는 향후 범위이며 이번 작업에서 추가하지 않았습니다.
+
+Sixel의 256색/6픽셀 band·호환 지우기 요구, tmux/screen 이미지 미지원, 128 MiB PDF/12 MP viewport/128 MiB encoding 한계는 유지됩니다. native rasterization은 개별 중단이 불가능하며 오래된 결과를 버리는 방식입니다. 전송은 UI 출력을 잠시 막을 수 있고 비정상 종료·전원 손실은 복원을 보장하지 않습니다. 여러 설치 파일의 게시가 완전히 원자적이지 않아 파일 시스템 오류 후 재설치가 필요할 수 있습니다. 이 한계를 해결하는 새 기능은 추가하지 않았습니다.

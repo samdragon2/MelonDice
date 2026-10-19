@@ -1,10 +1,10 @@
-# Melon Dice 0.2.0 — terminal implementation specification
+# Melon Dice 0.3.0 — terminal implementation specification
 
 Author: SamRyong. Python 3.10+. `Melon Dice.txt` is the original screen/behavior reference. The user's later instructions require a genuine TUI and exclude capture, image clipboard, and PDF editing/search/copy/export features from that reference.
 
 ## Interface and target environment
 
-`melondice` opens a full-screen prompt_toolkit interface **inside its current terminal**. It does not inspect or require `DISPLAY`, create a graphical window, run a GUI toolkit, launch a browser frontend, or require a desktop. Ordinary interactive SSH is a supported text-UI target. Non-TTY streams and `TERM=dumb` fail with a clear explanation. Recommended minimum: 80×24 cells, VT100-compatible control sequences, UTF-8, Linux/POSIX; primary installation target is Raspberry Pi OS Lite 64-bit.
+The application opens a full-screen prompt_toolkit interface **inside its current terminal**. The managed Pi launcher can first start an existing mlterm-fb from a bare local Linux VT as described below; this launch route remains user-unverified. It does not inspect or require `DISPLAY`, create a graphical window, run a GUI toolkit, launch a browser frontend, or require a desktop. Ordinary interactive SSH is a supported text-UI target. Non-TTY streams and `TERM=dumb` fail with a clear explanation. Recommended minimum: 80×24 cells, VT100-compatible control sequences, UTF-8, Linux/POSIX; primary installation target is Raspberry Pi OS Lite 64-bit.
 
 Home, chat, editor, Options, file picker, information, authentication instructions, and all decisions are terminal widgets. Terminal font size and IME are client-controlled. Mouse reporting is optional and configurable; complete keyboard paths exist. The small-terminal body requests a resize while global controls remain available.
 
@@ -90,4 +90,4 @@ Private XDG config directory or `--data-dir`: config, host identity, separate cr
 
 ## Verification boundary
 
-The user previously observed RGB Sixel rectangles and a `mutool`-rendered sample PDF PNG displayed by img2sixel on the physical Pi inside mlterm-fb. These external pipeline observations do not establish Melon Dice installation/PyMuPDF integration or viewer behavior. This implementation permits/performs only source review, compilation, static lint, framework/protocol source inspection and metadata/configuration checks. No app launch, graphics probe, rendering/conversion experiment, login, inference or runtime tests were performed by the developer. See DEVELOPMENT_REPORT.md for actual checks, remaining limitations and the user manual checklist.
+The user observed the external PDF → PNG → img2sixel → mlterm-fb pipeline on the physical Pi and subsequently confirmed PDF page transitions and retention of the previous page during updates inside Melon Dice. These observations do not establish comprehensive performance, memory, restoration or compatibility. Plain `melondice` launch remains unconfirmed: the latest report was a missing `~/.local/bin/melondice` executable. Portable authentication improvements, QR/direct-password login and UI hiding are not implemented. This implementation permits/performs only source review, compilation, static lint, framework/protocol source inspection and metadata/configuration checks. No app launch, graphics probe, rendering/conversion experiment, login, inference or runtime tests were performed by the developer. See DEVELOPMENT_REPORT.md for actual checks, remaining limitations and the user manual checklist.
