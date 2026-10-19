@@ -1,7 +1,7 @@
 """Protocol-specific presentation. Only the UI/lifecycle thread writes to the terminal.
 
 Sixel conversion runs on Tasks' asyncio loop; its subprocess never inherits the
-TUI streams. A presenter retains only its latest encoded viewport.
+TUI streams. Sixel retains the displayed encoding and at most one replacement.
 """
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ class KittyPresenter:
         self.uploaded = None
         self.placed = False
         self.rectangle = None
+        self.placed_identity = None
 
     def prepare(self, tasks, png, identity, changed, failed):
         pass  # PNG is already the protocol's native format.
@@ -30,17 +31,23 @@ class KittyPresenter:
     def suspend(self, free=False):
         pass
 
+    def ready(self, identity):
+        return True  # PNG needs no asynchronous encoding.
+
     def hide(self, output, free=False):
         if self.placed or (free and self.uploaded is not None):
             action = "I" if free else "i"
             output.write_raw(f"{ESC}_Ga=d,d={action},i={self.image_id},q=2{ESC}\\")
             output.flush()
         self.placed = False
+        self.placed_identity = None
         if free:
             self.uploaded = None
         return False  # Kitty deletion does not damage the text screen.
 
     def show(self, output, png, identity, rectangle):
+        if self.placed and self.placed_identity == identity and self.rectangle == rectangle:
+            return True
         x, y, columns, rows = rectangle
         if identity != self.uploaded:
             data = base64.b64encode(png).decode("ascii")
@@ -53,6 +60,8 @@ class KittyPresenter:
         output.write_raw(f"{ESC}7{ESC}[{y + 1};{x + 1}H{ESC}_Ga=p,i={self.image_id},p=1,c={columns},r={rows},C=1,q=1{ESC}\\{ESC}8")
         output.flush()
         self.placed, self.rectangle = True, rectangle
+        self.placed_identity = identity
+        return True
 
 
 async def encode_sixel(executable, png):
@@ -135,17 +144,19 @@ class SixelPresenter:
 
     def __init__(self, executable):
         self.executable = executable
-        self.uploaded = None
-        self.encoded = None
+        self.ready_identity = None
+        self.ready_encoded = None
         self.placed = False
         self.rectangle = None
         self.placed_identity = None
+        self.displayed_encoded = None
+        self.displayed_identity = None
         self.future = None
         self.requested = None
         self.generation = 0
 
     def prepare(self, tasks, png, identity, changed, failed):
-        if identity == self.uploaded or (self.future is not None and identity == self.requested):
+        if self.ready(identity) or (self.future is not None and identity == self.requested):
             return
         self.suspend()
         generation = self.generation
@@ -155,17 +166,22 @@ class SixelPresenter:
             if generation != self.generation:
                 return  # Cancellation may race completion; never accept stale output.
             self.future = None
+            self.requested = None
             try:
                 encoded = future.result()
             except CancelledError:
                 return
             except Exception as error:
-                failed(f"Sixel encoding failed: {type(error).__name__}: {error}. Check img2sixel on PATH and restart, or use --pdf-graphics off.")
+                failed(f"Sixel encoding failed: {type(error).__name__}: {error}. Previous image retained where safe. Check img2sixel on PATH; change page/zoom/pan to retry.")
             else:
-                self.uploaded, self.encoded = identity, encoded
+                self.ready_identity, self.ready_encoded = identity, encoded
             changed()
 
         self.future = tasks.submit(encode_sixel(self.executable, png), done)
+
+    def ready(self, identity):
+        return ((identity == self.ready_identity and self.ready_encoded is not None)
+                or (identity == self.displayed_identity and self.displayed_encoded is not None))
 
     def suspend(self, free=False):
         self.generation += 1
@@ -173,10 +189,12 @@ class SixelPresenter:
             self.future.cancel()
             self.future = None
         self.requested = None
+        # A completed replacement is still pending until show() actually sends it.
+        self.ready_identity = self.ready_encoded = None
         if free:
-            self.uploaded = self.encoded = None
+            self.displayed_identity = self.displayed_encoded = None
 
-    def hide(self, output, free=False):
+    def _erase(self, output):
         damaged = self.placed
         if damaged:
             x, y, columns, rows = self.rectangle
@@ -189,6 +207,11 @@ class SixelPresenter:
                 for row in range(max(0, y), min(y + rows, size.rows)):
                     output.write_raw(f"{ESC}[{row + 1};{x + 1}H{ESC}[{columns}X")
             output.write_raw(ESC + "8")
+        return damaged
+
+    def hide(self, output, free=False):
+        damaged = self._erase(output)
+        if damaged:
             output.flush()
         self.placed = False
         self.placed_identity = None
@@ -197,16 +220,25 @@ class SixelPresenter:
         return damaged  # Caller must repaint the text screen after erasure.
 
     def show(self, output, png, identity, rectangle):
-        if identity != self.uploaded or self.encoded is None:
-            return
+        if not self.ready(identity):
+            return False
         if self.placed and identity == self.placed_identity and rectangle == self.rectangle:
-            return
+            return True
+        encoded = self.ready_encoded if identity == self.ready_identity else self.displayed_encoded
+        if self.placed:
+            # Same-bounds replacement: erase picture cells and send the finished
+            # DCS in ONE flush. Never expose an empty region while encoding.
+            self._erase(output)
         x, y, _columns, _rows = rectangle
         # DECSDM reset uses the cursor origin (setting it puts images at home in
         # mlterm). The bounded raster ends above the footer, leaving room for
         # mlterm's post-image line feed, so no screen scrolling is needed.
         # Save/restore both this private mode and the terminal cursor.
         output.write_raw(f"{ESC}7{ESC}[?80s{ESC}[?80l{ESC}[{y + 1};{x + 1}H" +
-                         self.encoded + f"{ESC}[?80r{ESC}8")
+                         encoded + f"{ESC}[?80r{ESC}8")
         output.flush()
         self.placed, self.placed_identity, self.rectangle = True, identity, rectangle
+        self.displayed_identity, self.displayed_encoded = identity, encoded
+        if self.ready_identity == identity:
+            self.ready_identity = self.ready_encoded = None
+        return True

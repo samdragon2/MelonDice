@@ -147,6 +147,8 @@ class Application:
         chat = lambda: plain() and self.active == "chat"
         editor = lambda: plain() and self.active == "editor"
         pdf = lambda: plain() and self.active == "pdf"
+        pdf_surface = lambda: (pdf() and bool(self.sessions["pdf"].pages)
+                               and self.ui.layout.has_focus(self.sessions["pdf"].viewport))
         for number in ("1", "2", "3"):
             bind(number, lambda _e, n=number: setattr(self, "selected", ORDER[int(n) - 1]), home)
         bind("enter", lambda _e: self.navigate(self.selected) if self.selected else None, home)
@@ -166,16 +168,18 @@ class Application:
         bind("c-f", lambda _e: self.sessions["editor"].find(), editor)
         bind("c-z", lambda e: e.current_buffer.undo() if not e.current_buffer.read_only() else None)
         bind("c-y", lambda e: e.current_buffer.redo() if not e.current_buffer.read_only() else None, editor)
-        bind("pageup", lambda _e: self.sessions["chat"].scroll(-1) if self.active == "chat" else self.sessions["pdf"].turn(-1), lambda: chat() or pdf())
-        bind("pagedown", lambda _e: self.sessions["chat"].scroll(1) if self.active == "chat" else self.sessions["pdf"].turn(1), lambda: chat() or pdf())
+        bind("pageup", lambda _e: self.sessions["chat"].scroll(-1) if self.active == "chat" else self.sessions["pdf"].turn(-1), lambda: chat() or pdf_surface())
+        bind("pagedown", lambda _e: self.sessions["chat"].scroll(1) if self.active == "chat" else self.sessions["pdf"].turn(1), lambda: chat() or pdf_surface())
+        bind("<", lambda _e: self.sessions["pdf"].turn(-1), pdf_surface)
+        bind(">", lambda _e: self.sessions["pdf"].turn(1), pdf_surface)
         bind("enter", lambda _e: self.sessions["pdf"].open_selected_recent(), lambda: pdf() and not self.sessions["pdf"].pages)
         for key in ("g", "G"):
-            bind(key, lambda _e: self.sessions["pdf"].goto(), pdf)
+            bind(key, lambda _e: self.sessions["pdf"].goto(), pdf_surface)
         for key in ("+", "="):
-            bind(key, lambda _e: self.sessions["pdf"].magnify(1.25), pdf)
-        bind("-", lambda _e: self.sessions["pdf"].magnify(0.8), pdf)
+            bind(key, lambda _e: self.sessions["pdf"].magnify(1.25), pdf_surface)
+        bind("-", lambda _e: self.sessions["pdf"].magnify(0.8), pdf_surface)
         for key, x, y in [("left", -1, 0), ("right", 1, 0), ("up", 0, -1), ("down", 0, 1)]:
-            bind(key, lambda _e, x=x, y=y: self.sessions["pdf"].pan(x, y), lambda: pdf() and bool(self.sessions["pdf"].pages))
+            bind(key, lambda _e, x=x, y=y: self.sessions["pdf"].pan(x, y), pdf_surface)
         return bindings
 
     def show_dialog(self, dialog):
@@ -430,15 +434,20 @@ class Application:
             visible = (not self.ui.is_done and not self.exiting and not self.dialog and self.active == "pdf"
                        and size.columns >= 80 and size.rows >= 24 and viewer is not None)
             identity = viewer.display_identity() if visible else None
-            context = (size.columns, size.rows, self.style.invalidation_hash(), self.graphics.cell)
-            if identity is None:
-                self.graphics.suspend()
-            presenter = self.graphics.presenter
-            if self.graphics.protocol == "kitty":
-                self.graphics.hide(self.ui.output)
-            elif self.graphics.placed and (identity != presenter.placed_identity
-                    or context != self.graphics_context or not self.graphics.supported
-                    or self.ui.renderer.last_rendered_screen is None):
+            context = (size.columns, size.rows, self.style.invalidation_hash(),
+                       self.ui.style_transformation.invalidation_hash(), self.ui.color_depth,
+                       self.graphics.cell)
+            damaged = (context != self.graphics_context or not self.graphics.supported
+                       or self.ui.renderer.last_rendered_screen is None)
+            if viewer is not None:
+                if not visible:
+                    viewer.leave_surface()
+                    self.graphics.hide(self.ui.output, free=True)
+                elif damaged:
+                    viewer.suspend_updates()
+            # A requested page/zoom/pan is not damage. Keep the placed frame
+            # through both native rasterization and asynchronous encoding.
+            if self.graphics.placed and (not visible or identity is None or damaged):
                 self.graphics.hide(self.ui.output)
             self.graphics_context = context
             if self.graphics.text_dirty:
@@ -458,11 +467,12 @@ class Application:
             if not self.dialog and self.active == "pdf" and self.sessions["pdf"].viewport in self.ui.layout.find_all_windows():
                 self.graphics.begin(self.ui.output)
                 presenter = self.graphics.presenter
-                if (self.graphics.protocol == "sixel" and self.graphics.placed
+                if (self.graphics.placed
                         and presenter.rectangle != self.sessions["pdf"].bounds):
-                    # Layout changes (e.g. a wrapped heading) are known only
-                    # after layout. Repair text before presenting at new bounds.
+                    # Position/extent changes are known only after layout.
+                    # Repair text before presenting at the new bounds.
                     self.graphics.hide(self.ui.output)
+                    self.sessions["pdf"].suspend_updates()
                     self.ui.renderer.erase(leave_alternate_screen=False)
                     self.graphics.text_dirty = False
                     self.ui.invalidate()

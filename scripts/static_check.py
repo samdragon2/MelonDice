@@ -15,8 +15,9 @@ PACKAGE = ROOT / "src" / "melondice"
 def main():
     failures = []
     paths = sorted(PACKAGE.glob("*.py"))
+    tooling = sorted((ROOT / "scripts").glob("*.py"))
     builtin_names = set(dir(builtins)) | {"__file__", "__name__", "__package__", "__spec__"}
-    for path in paths:
+    for path in paths + tooling:
         source = path.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(path), feature_version=(3, 10))
         compile(tree, str(path), "exec")  # Generate a code object; never execute it.
@@ -94,7 +95,10 @@ def main():
     for name in ("README.md", "SPEC.md", "DEVELOPMENT_REPORT.md", "THIRD_PARTY_NOTICES.md", "LICENSE"):
         if not (ROOT / name).is_file():
             failures.append("Required artifact missing: " + name)
-    text_files = paths + list((ROOT / "scripts").glob("*.py")) + [
+    for name in ("scripts/install.py", "scripts/launcher_bootstrap.py", "scripts/melondice-launcher.sh"):
+        if not (ROOT / name).is_file():
+            failures.append("Installation artifact missing: " + name)
+    text_files = paths + tooling + [ROOT / "scripts/melondice-launcher.sh"] + [
         ROOT / name for name in ("pyproject.toml", "requirements.txt", "config.example.json",
                                 "README.md", "SPEC.md", "DEVELOPMENT_REPORT.md", "THIRD_PARTY_NOTICES.md")]
     for path in text_files:
@@ -106,7 +110,7 @@ def main():
                 failures.append(f"{path.name}:{number}: trailing whitespace")
     if failures:
         raise SystemExit("\n".join(failures))
-    print(f"Static audit passed: {len(paths)} source modules; Python 3.10 grammar; code-object compilation; "
+    print(f"Static audit passed: {len(paths)} source modules and {len(tooling)} tooling scripts; Python 3.10 grammar; code-object compilation; "
           "global symbols/local import paths; metadata/dependency consistency; entry point; JSON fields; PDF mode consistency; no GUI imports or Ctrl+P binding; required documents; whitespace.")
     print("No application module was imported or executed. No runtime tests were performed.")
 

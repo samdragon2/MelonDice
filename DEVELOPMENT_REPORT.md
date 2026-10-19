@@ -1,132 +1,94 @@
-# Melon Dice Sixel PDF presentation — development report
+# PDF navigation, retained display and installation — development report
 
-## Follow-up fix: PDF viewer construction (2026-10-19)
+Date: 2026-10-19. Project: Melon Dice 0.2.0. Current branch: `pdfattach`.
 
-The user reported `Label.__init__() got an unexpected keyword argument 'height'`
-when opening pdfViewer on the Pi. The pinned prompt_toolkit 3.0.52 `Label`
-constructor does not accept `height`; this prevented construction of the viewer,
-before a PDF could be opened or displayed.
+## Scope and source review
 
-Replaced the heading Label with a non-focusable `Window` containing a callable
-`FormattedTextControl`. `Window` supports `height=2`, so the intended fixed
-two-row heading remains in place during status updates. Reviewed the locally
-installed framework source and all project Label calls; no other Label call
-passes `height`.
+Read `Melon Dice.txt` first, then `SPEC.md`, `README.md`, the previous development report, and the PDF viewer/backend, presenters, graphics controller, UI render hooks/bindings and task dispatch. Inspected repository/ancestor locations for applicable `AGENTS.md`; none was present. Reviewed the locally available pinned prompt_toolkit 3.0.52 wheel's render hooks, screen diff/erasure, style/size invalidation and output flushing as source, without importing or executing the application. The PDF task began with a clean checkout. The installation follow-up preserved those uncommitted PDF edits. Worked on the existing branch; no commit, branch switch, merge or push was performed.
 
-Verification: source compilation, the existing source-only static audit, Pyflakes,
-and `git diff --check` passed. No application modules were imported or run;
-no graphics probe, conversion experiment, login or runtime test was performed.
-The user still needs to verify viewer startup and PDF presentation on the Pi.
-No commit, branch change or push was performed for this follow-up. The original
-implementation report below describes the earlier delivery, including its Git
-state at that time.
+This is a focused terminal TUI change. The fixed two-row heading remains a `Window(FormattedTextControl(...), height=2)`, preserving the earlier correction for the unsupported `Label(height=...)` argument. No screenshot/image clipboard/PDF editing/export/GUI/authentication feature was added. No mlterm installation or OS display settings were changed.
 
-Date: **2026-10-19**. Project version: **0.2.0**. Author: **SamRyong**. Workspace: `/Users/samryong/MelonDice`, branch **pdfattach**.
+## User observations — not developer checks
 
-## Scope and verification boundary
+The user reports a black waiting interval during PDF updates and a keyboard without PageUp/PageDown. The target is a Raspberry Pi 5 running Raspberry Pi OS Lite / Debian 13 Trixie, aarch64, with a directly connected keyboard/HDMI monitor and mlterm 3.9.5 built for the framebuffer backend at `$HOME/.local/bin/mlterm-fb`. The user previously displayed a mutool-rendered PDF through img2sixel on that hardware. These observations establish the external pipeline, not this application's revised lifecycle or flicker behavior. The earlier viewer construction failure was reported separately and its fixed-height Window correction is preserved.
 
-Implemented Sixel presentation alongside the existing Kitty PDF path in the current checkout. Before editing, read SPEC, README, the prior development report, terminal/PDF worker/viewer/app/CLI code, settings, configuration validation, task dispatch and dependency declarations. The checkout was clean initially. No applicable AGENTS.md was found in the workspace/inspected ancestor locations. No branch switch, commit, merge or push was performed. No Pi software was installed or reconfigured.
+## Changes
 
-**No Melon Dice launch, terminal graphics probe, PDF rendering/conversion experiment, login attempt, live inference request, unit/integration/functional/end-to-end test, screenshot, screen sharing or remote viewing was performed or requested.** All implementation checks were source review or non-interactive static analysis. Static success does not establish runtime behavior.
+- Added literal `< Previous / > Next`, usually Shift+comma / Shift+period. Kept PageUp/PageDown aliases, arrows, zoom and G. PDF viewing bindings require an open document, focused viewport and no dialog. Page changes clamp to document bounds; a clamped no-op does not reset pan. Chat/editor/path/search/password/dialog input is outside that filter. Updated visible hints, README and SPEC.
+- Separated requested viewport state, the single native in-flight request, completed replacement PNG, asynchronous encoding/ready output, and the last actually placed frame. A frame becomes Displayed only after the presenter successfully sends it; a cached raster/encoding alone does not count. Displayed and Requested page/zoom/pan are shown separately, including during failures/cancellation.
+- For same-document page/zoom/pan changes with unchanged bounds/pixel geometry, kept the prior valid picture through rasterization and encoding. Removed the dependence of display identity on matching the current request or having no error. Kept image-region text invariant so ordinary prompt_toolkit text diffs cannot erase it. Loading, encoding, errors and cancellation appear outside the viewport in the fixed two-row heading/notification area. Long paths/status text clip horizontally rather than resizing the viewport.
+- Split Sixel ready output from the displayed encoding. Replacement picture-cell erasure and the already completed DCS share one buffered flush; no standalone clear/flush occurs while replacement work is pending. Same-bounds replacement does not trigger a full-screen text repaint. Kitty also tracks actual placement and skips unchanged placement rather than hiding on every text redraw.
+- Navigation revisions/document identity reject obsolete native results, including a request changed away and back. One native raster operation remains outstanding; later destinations coalesce. Obsolete encoding is cancelled immediately on a new request and generation checks reject raced callbacks. The displayed frame plus one necessary replacement are retained, with no page cache.
+- Render/converter failure preserves the previous valid visible picture where safe, reports outside the image and blocks automatic retries for that request. Converter failure no longer disables the graphics protocol globally; changing page/zoom/pan retries. Native worker failure explains that pdfViewer must be closed/reopened. Esc drops the pending replacement, cancels encoding and rejects a native result that may finish later, preserving an existing safe picture and leaving Requested metadata explicit.
+- Overlays, Home/app switches, document replacement and close erase the picture and discard display/replacement buffers; returning renders the session's requested viewport again. Resize, cell geometry, style/color-depth changes, framework full repaint and post-layout bound changes use cleanup/repair paths. All protocol output remains on the UI/lifecycle thread; the captured converter process never writes to the terminal. Existing terminal guard, cursor/mode restoration, session controllers and worker cleanup remain in place.
 
-## Hardware observations supplied by the user
+## Follow-up: one-time installation and plain `melondice` launch
 
-These observations were performed by the user on the physical Pi **before this implementation**, not by the developer:
+Added `scripts/install.py`, the installed stdlib bootstrap `scripts/launcher_bootstrap.py`, a generated shell wrapper template `scripts/melondice-launcher.sh`, and `src/melondice/launcher.py`. Read the existing CLI, configuration persistence/locks, packaging, static audit and current documentation before implementing this follow-up. No installer, launcher, venv creation, pip/package operation, terminal or app was executed by the developer.
 
-- Raspberry Pi 5, host `sam-pi`, user `samryong`, Debian GNU/Linux 13 Trixie / Raspberry Pi OS Lite, aarch64, direct `/dev/tty1`, framebuffer/DRI devices and video/render/input group membership. No desktop/X11/Wayland setup was present. No fixed IP, monitor resolution or cell size is assumed.
-- mlterm **3.9.5 framebuffer build**, configured with `--with-gui=fb --with-tools=mlimgloader,mlcc --with-utmp=none`, installed as `/home/samryong/.local/bin/mlterm-fb`. This is not a claim that a newer KMS/DRM backend was built.
-- The launcher `"$HOME/.local/bin/mlterm-fb" --aafont=true --fontsize=24 --fg=white --bg=black` opened an interactive terminal on the directly connected monitor. `~/.mlterm/aafont` uses `DEFAULT=DejaVu Sans Mono`.
-- The user piped a three-pixel RGB PPM into img2sixel and observed red/green/blue rectangles.
-- The user rendered the W3C dummy PDF with `mutool draw -r 96 -o test.png test.pdf 1` and displayed it with `img2sixel -h 600 test.png`. The photographed observation showed a white page and “Dummy PDF file.” MuPDF's ICC warning did not prevent PNG generation.
+- **One-time install:** `python3 scripts/install.py --profile pi` from the copied source tree, as the regular user without sudo. It installs an executable `~/.local/bin/melondice`; the private environment is automatic and requires no activation. Normal subsequent launch is only `melondice`.
+- **Explicit updates:** rerun `python3 scripts/install.py` after closing the app and copying updated source. Package installation and `pip check` exist only in this installer; they were not run during development. A staged owned environment is selected only after those steps succeed. An exclusive install lock prevents updating managed running sessions; the app's default data lock protects saved configuration. Old environments are pruned only when their ownership marker matches. Package failure leaves the previous environment selected; multi-file publication is not fully transactional and filesystem failures may require rerunning.
+- **PATH/collision handling:** managed guarded PATH blocks support Bash, Zsh and POSIX shells, preserve unrelated text and avoid repeated block insertion/prefixing. The installer prints the one-time current-shell export/new-login instructions. Symlinked shell files or other shells use explicit manual PATH setup and `--no-path-setup`. SHA-256 ownership records and final-symlink refusal prevent overwriting unrelated/modified executables at the requested launcher location.
+- **Saved preferences:** new Pi configuration writes Sixel only when no `pdf_graphics` key exists. Existing auto/Kitty/Sixel/off choices, geometry and all unrelated data remain; an explicit installer `--pdf-graphics` deliberately changes that preference. Existing application CLI arguments are forwarded unchanged. Updates preserve the installed profile and custom mlterm path by default.
+- **Context routing:** auto first-install profile uses the device-tree Raspberry Pi model, with explicit pi/terminal profile selection available. Runtime framebuffer startup requires actual local Linux VT device identity, matching controlling tty and foreground process group. SSH environment/sshd/mosh ancestry prevents local framebuffer startup; PTYs and existing mlterm executable ancestry run directly regardless of TERM. The installation-specific `MELONDICE_FB_SESSION` marker prevents recursion; a marker on a bare VT fails clearly.
+- **Dedicated terminal:** start the existing mlterm-fb with an argument array and `-e` for the installed Python/module, with no shell or injected init string. The supervisor holds the installation lock while mlterm runs. Intended normal exit closes that dedicated session and returns to the original console; app exit inside an existing terminal leaves that terminal open. No mlterm build/install or OS display changes were made.
+- **Startup boundary:** the shell wrapper/stdlib bootstrap locks and locates the selected environment, then executes its installed launcher. The launcher checks saved settings/dependency presence and routes to the TUI. No installation/update/network-update code runs during ordinary launch. Missing interpreter, bootstrap/environment/settings, installed Python dependencies and mlterm paths produce repair guidance. The source checkout is needed for updates, not routine launch.
 
-These establish that the external mutool → PNG → img2sixel → mlterm-fb pipeline displayed images on that device. They do **not** establish Melon Dice installation, Python dependency availability, PyMuPDF rendering, viewer positioning, zoom/pan, redraw behavior or terminal restoration.
-
-## Implemented changes
-
-| Area | Result |
-| --- | --- |
-| Presentation separation | New `graphics_presenters.py` contains small Kitty/Sixel presenters. `terminal.py` handles common selection, geometry, reply filtering and output coordination. The spawned PyMuPDF rasterizer remains the production renderer; no mutool shell fallback or GUI backend was added. |
-| Modes | CLI, config validation, example config, Options, capability messages and docs consistently support `auto`, `kitty`, `sixel`, `off`. Existing auto/off values remain valid. CLI overrides saved config for one run; Options applies graphics/geometry changes after restart. |
-| Bounded detection | Auto sends a random-ID Kitty PNG query and Primary DA. A positive matching Kitty response within 1.5 seconds wins. Otherwise at the deadline Sixel requires advertised feature 4 and available img2sixel. Late replies cannot switch protocols. Explicit Kitty still requires acknowledgement; explicit Sixel requires no Kitty/DA response and trusts the user's terminal choice. TERM alone neither proves nor rules out graphics. |
-| Geometry | Query cell pixels (`CSI 16 t`) and text-area pixels (`CSI 14 t`), and inspect matching-grid TTY pixel dimensions. Whole-area dimensions must divide exactly by the grid; direct cell reports take precedence. Invalid values are rejected. Resize invalidates old geometry and opens another bounded geometry window. `--pdf-cell-pixels WIDTHxHEIGHT` / `pdf_cell_pixels` provides a measured override (width 1–256, height 1–512); empty config queries automatically. Font size is never treated as cell size. |
-| Encoding | Detect img2sixel through PATH. Invoke it using an argument array on the existing background asyncio loop, pipe the PNG through stdin and capture stdout/stderr. Use 7-bit output, 256 colors, no diffusion and low quantizer quality without scaling. Bound conversion to 30 seconds, stdout to 128 MiB, stderr to 64 KiB, and child exit after pipe completion to two seconds. Validate one DCS and matching raster dimensions; sanitize failure diagnostics before showing them. |
-| Cancellation/resources | Cancel obsolete converter work, kill and reap owned children, drain pipes, and reject stale callbacks by generation. Protect child acquisition against cancellation during process creation. Retain one completed encoded viewport, free it on PDF close/shutdown, and preserve it across ordinary hide/show. PDF raster results also check document identity. |
-| Placement/cleanup | Sixel uses the reserved viewport origin and saves/restores cursor and DECSDM mode. Raster height rounds down to six-pixel bands; a text row below permits terminal post-image cursor advancement without screen scrolling. ECH clears occupied picture cells; the text renderer is repainted once after damage. Kitty continues using its own image ID, PNG chunks and protocol deletion. |
-| Redraw coordination | Raw output remains on the UI/lifecycle thread through prompt_toolkit's output. Unchanged Sixel output survives ordinary text redraws. The 50ms pump polls work but no longer invalidates text unconditionally. Page/zoom/pan/resize, overlays, switches, full repaints and close clear/repaint when necessary. Fixed two-row PDF metadata prevents busy/encoding labels from changing viewport dimensions repeatedly. |
-| Usability/docs | Missing capabilities, missing executable, geometry and converter errors leave text apps and PDF metadata/password/file/outline controls usable. Updated README, SPEC, dependency comments, component notices and this report. README now contains actual installation/use instructions rather than duplicating the previous report. Static audit checks graphics choices across CLI/validation/Options. |
-
-Existing Home selection/Enter, retained application controllers, F1 and Alt+Tab/F6 navigation, background chat streaming, editor and text clipboard, PDF picker/recents/password/outline/navigation, guarded close and terminal guard remain in place. Their runtime preservation is awaiting user verification. No screenshot, image clipboard, PDF editing, OCR, extraction substitute or PDF export feature was introduced.
+Reviewed the `-e` argument-vector and working-directory handling in [upstream mlterm configuration source](https://raw.githubusercontent.com/arakiken/mlterm/master/uitoolkit/ui_main_config.c) and the [Debian mlterm command reference](https://manpages.debian.org/testing/mlterm/mlterm.1.en.html). This is documentary source inspection, not inspection/execution of the user's installed 3.9.5 binary. Actual child lifetime, console return, framebuffer permissions/fonts and signal behavior still require user verification.
 
 ## Checks actually performed
 
-Only the following source/static checks were run, without importing or executing application modules:
+Only source/static checks were performed; application modules were not imported or executed.
 
-| Check | Result |
+| Check | Actual result |
 | --- | --- |
-| `python3 -X pycache_prefix=/private/tmp/melondice-bytecode -m compileall -q src` | Passed: compilation of 17 source modules; bytecode is outside the checkout. |
-| `/opt/homebrew/bin/python3 -B scripts/static_check.py` | Passed: Python 3.10 grammar/code-object compilation, global symbols and local imports, entry point, dependency consistency, config fields/mode consistency, forbidden GUI/Ctrl+P scan, required docs and whitespace. |
-| Pyflakes 3.4.0 on `src` and `scripts`, loaded from the pre-existing wheel in `/private/tmp/melondice-source-audit` | Passed with no diagnostics. No package installation or application import. |
-| `git diff --check` and source/diff review | Passed. Reviewed tracked changes and the new untracked presenter source. No runtime checks. |
-| Framework/protocol source inspection | Read the pre-existing prompt_toolkit 3.0.52 wheel's render hooks, diff/erase behavior and public renderer accessors; consulted upstream terminal/mlterm/libsixel sources for query, cursor-origin and encoder behavior. No graphics sequences were executed. |
+| `python3 -X pycache_prefix=/private/tmp/melondice-bytecode -m compileall -q src scripts` | Passed; compiled 18 source modules and 3 tooling scripts, bytecode outside the checkout. |
+| `/opt/homebrew/bin/python3 -B scripts/static_check.py` | Passed; Python 3.10 grammar/code-object compilation, symbols/local import paths, entry point, dependency/config/mode consistency, excluded GUI/Ctrl+P scan, required artifacts and whitespace; now also parses/compiles/audits installer and bootstrap source without executing them. |
+| Pyflakes 3.4.0 over `src` and `scripts` using the pre-existing wheel under `/private/tmp/melondice-source-audit` | Passed with no diagnostics; no installation or application import. |
+| `sh -n scripts/melondice-launcher.sh` and syntax-only parsing of statically substituted wrapper/PATH snippets | Passed; shell bodies were not executed. |
+| `git diff --check` | Passed. |
+| Source/diff and pinned framework source review | Reviewed key-filter scope; requested/in-flight/ready/placed transitions; native revision/document and converter generation rejection; cancellation/failure; bounded buffers; render-hook damage handling; ECH/DCS flush ordering; protocol-specific cleanup and UI-thread ownership. This is static reasoning, not runtime evidence. |
 
-The local compile interpreter is Python 3.9.6; the static audit/Pyflakes interpreter is Python 3.14.7, with the audit explicitly parsing Python 3.10 grammar. These are compiler/linter results, not proof that dependencies work on the Pi's Python/aarch64 environment. No new wheels/dependencies were installed for this implementation.
+No installer/bootstrap/launcher execution, package installation, Melon Dice launch, graphics probe, rendering/conversion experiment, login/inference request, unit/integration/functional/end-to-end test, screenshot, screen sharing or remote viewing was performed or requested. No dependencies were installed. Compilation/static success does not establish runtime behavior on the Pi.
 
-Source references used for implementation review: [XTerm control sequences](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html) defines DA feature 4, cell/text-area pixel queries and DECSDM; [mlterm parser source](https://github.com/arakiken/mlterm/blob/master/vtemu/vt_parser.c) shows cursor-origin versus home-origin image behavior and picture cells; [img2sixel command source](https://github.com/saitoha/libsixel/blob/master/converters/img2sixel.c) and [libsixel encoding source](https://github.com/saitoha/libsixel/blob/master/src/tosixel.c) describe the options and raster envelope. Upstream source inspection is not runtime validation of the user's installed 3.9.5 build.
+## Remaining limitations
 
-## Installation and use on the Pi
+- Installer/bootstrap/context detection/PATH/update behavior is source-reviewed only. No installation, launch or repair scenario was executed, including `--help`. User verification is required on the Pi and its Bash login environment. Custom/symlinked shell startup files require manual PATH management. An explicit one-time PATH export or a new terminal/login is necessary; no child installer can alter the calling shell.
+- Installation relies on a working system Python 3.10+, venv/pip/CA certificates, available package wheels/build prerequisites, and the user's existing mlterm-fb/img2sixel. It reports missing prerequisites without using sudo or installing OS packages. Normal launch relies on the selected system Python/environment remaining at their installed paths. A new Pi Sixel preference does not establish Sixel support for an SSH client's terminal.
+- The package/environment selection is staged, but shell/config/launcher publication is not one cross-file transaction. Permission/disk errors during publication can require repair by rerunning the installer. Installer ownership/locks protect managed app sessions and internal resources; arbitrary manual use of internal environments is outside that lifecycle.
 
-Full one-line instructions and dependency details are in [README.md](README.md). These are **user instructions, not commands executed on the Pi by the developer**.
+- All revised runtime behavior awaits the user's verification, especially physical mlterm-fb picture-cell retention/erasure, text diff interactions, clipping, cursor/DECSDM restoration, child cleanup and performance.
+- Sixel has no universal atomic swap. Combining erasure and finished output in one flush removes the avoidable rasterization/encoding wait after a clear, but terminal parsing/transmission may still show replacement artifacts or flicker. Zero flicker is not claimed.
+- Terminal output transmission is serialized on the UI thread and may briefly block input. No Pi latency/CPU/memory measurements were taken. Existing 12 MP viewport and 128 MiB encoded-output limits still apply; the retained display plus replacement uses more memory than one frame, but no pages accumulate in a cache.
+- Native rasterization cannot be individually interrupted; cancelled/obsolete native work may finish before its result is discarded. Converter cancellation still requires OS process termination/reaping. Uncatchable termination/power loss cannot guarantee cleanup.
+- Overlays/switches intentionally discard images and may require rasterization/encoding on return while preserving document/page/zoom/pan session state. Geometry/damage repair can expose a cleared region. A request stopped by failure/cancellation requires changing page/zoom/pan to retry; native-worker failure requires close/reopen.
+- Existing Sixel palette reduction, six-pixel height bands, compatible text/graphics erasure requirement, terminal geometry discovery/override requirements, unsupported tmux/screen and bare-console images remain. No new installation or hardware compatibility claim is made.
 
-From the development computer, copy this uncommitted project tree (adjust the destination if needed):
+## Manual verification checklist — for the user, not performed by the developer
 
-```sh
-rsync -av --exclude='.git' --exclude='.venv' --exclude='__pycache__' /Users/samryong/MelonDice/ samryong@sam-pi:~/MelonDice/
-```
+After one-time installation, run `melondice`; the Pi launcher enters mlterm-fb from the bare console or uses an existing mlterm-fb session. Use the current installation instructions in README. Explicit graphics overrides remain optional. No mlterm reinstall or OS display change is part of this update.
 
-On the Pi, create the project venv if necessary:
+- [ ] **Startup/navigation:** Open a multi-page PDF. Confirm the heading constructs successfully and `< Previous / > Next` is visible. Use literal Shift+comma/Shift+period, optional PageUp/PageDown, G and outline. Repeated `<` at page 1 and `>` at the final page must clamp without resetting a panned view on a no-op.
+- [ ] **Input scope:** Type `<` and `>` in the chat composer, editor, file-path/search inputs and password/other dialogs. Confirm normal input and no PDF page movement. Check PDF viewing controls only act with the viewing surface focused; recent-file arrows/Enter still work before opening a document.
+- [ ] **Waiting interval/metadata:** From a successfully displayed page, request a different page that takes noticeable time. Verify the previous picture remains during native work and Encoding Sixel, the displayed page/zoom/pan remains accurate, the requested destination/status is separate, and the replacement appears promptly after completion. Assess any brief transmission artifact separately from the former blank waiting interval.
+- [ ] **Rapid navigation:** Repeat and alternate `<`/`>` rapidly, including away and back to a prior destination, then mix G/outline and zoom/pan. Confirm the final destination wins; no obsolete intermediate completion replaces it, pages do not accumulate in retained buffers, and the UI remains usable.
+- [ ] **Zoom/pan/idle redraw:** Exercise +/− to both limits and all arrows at page edges. Verify the old image remains during each pending update, aspect ratio/bounds stay correct and heading changes do not move the viewport. Stay idle and trigger ordinary status/text updates; assess absence of periodic erase/retransmit/full-screen redraw.
+- [ ] **Failure:** With a valid image visible, exercise a replacement render/encoding failure using a safe local disposable setup if available. Confirm the old image remains where safe, the requested page is not reported as Displayed, errors stay outside the image, there is no automatic retry loop, and a changed page/zoom/pan can retry after the cause is corrected. Check failed worker close/reopen guidance separately.
+- [ ] **Cancellation:** Press Esc during native rasterization, encoding and ready-but-not-yet-presented work where timing permits. Verify the prior picture survives where safe, cancellation and Requested metadata remain clear, no late result appears, and subsequent changed navigation works. Also cancel before the first picture and cancel a pending file/password open; no false Displayed page should appear.
+- [ ] **Overlays:** Open/dismiss Options, Information, file picker, G, outline and password/error dialogs while a PDF is visible or updating. Confirm picture removal before dialog text, correct cursor/focus, no fragments over dialogs, cancellation of obsolete pending display work and correct requested viewport on return.
+- [ ] **App/session switching:** While idle and while updating, use F1 Home and Alt+Tab/F6. Confirm no image remains on Home/chat/editor, no hidden completion paints there, and the PDF's document/requested page/zoom/pan resumes correctly. Check chat draft/streaming/scroll and editor unsaved buffer/cursor/undo still persist.
+- [ ] **Document replacement:** Open another PDF with the same viewport dimensions, including a password-protected file and a failed/cancelled open. Confirm no previous-document picture or stale completion is presented as the new document; failed/cancelled opens preserve committed session state.
+- [ ] **Resize/damage:** Resize wider/narrower/taller/shorter, below 80×24 and back, and request a normal terminal repaint if supported. Verify cleanup, geometry refresh, bounds/clipping and focus recovery. No old-size/old-position raster may cover controls; a clear/repaint is acceptable here. Verify a long filename/error does not change the heading height.
+- [ ] **Close/exit:** Close/reopen pdfViewer while work is pending; then exercise guarded full exit/cancel and actual exit. Verify child cleanup, no image remnants, cursor/echo/raw/canonical/flow-control/mouse/alternate-screen restoration and usable shell. Preserve unsaved editor/chat decisions.
+- [ ] **Kitty regression:** On a Kitty-capable terminal, exercise page/rapid input/zoom/pan/loading/failure/cancellation/overlays/switches/resize/exit with explicit Kitty and auto. Confirm correct PNG placement/deletion and no idle retransmission. Check explicit Sixel remains selected on the Pi and off/unsupported graphics still gives an actionable text explanation.
 
-```sh
-cd "$HOME/MelonDice" && python3 -m venv .venv
-```
+## Installation/launch manual checklist — for the user, not performed by the developer
 
-Then install/update the copied project:
-
-```sh
-cd "$HOME/MelonDice" && .venv/bin/python -m pip install --upgrade .
-```
-
-Inside the existing mlterm-fb session:
-
-```sh
-"$HOME/MelonDice/.venv/bin/melondice" --pdf-graphics sixel
-```
-
-The code has not been pushed; a remote pull alone cannot retrieve these local edits. No fixed IP is prescribed. `libsixel-bin` is already installed according to the user; do not reinstall mlterm or change Pi display configuration for this code update. Python packages, especially PyMuPDF, must still install successfully; `mupdf-tools` does not replace them. If geometry is unavailable, use independently measured `--pdf-cell-pixels WIDTHxHEIGHT` as documented in README, never guessed values from font size 24.
-
-## Remaining limitations and unverified runtime behavior
-
-- **All Melon Dice integration behavior remains unverified**, including installation, Python dependencies, PyMuPDF worker startup, actual image display/fidelity, position/clipping, scroll avoidance, cursor/focus, CPU/output volume, cancellation/reaping, redraws and terminal restoration on the Pi. No runtime success is claimed.
-- Sixel is a palette protocol: this initial encoder reduces color fidelity and retains one encoded viewport. The original aspect ratio/layout is retained, but photographs/gradients can differ from Kitty's PNG display. Up to five bottom pixels of viewport space are unused to contain bands.
-- Correct cleanup requires compatible text/graphics erasure and cursor-origin/DEC mode behavior. mlterm's picture-cell semantics inform the implementation; other Sixel terminals require manual verification. No universal Sixel compatibility is claimed.
-- tmux/screen graphics and bare Linux-console images remain unsupported. Run inside mlterm-fb or another compatible direct terminal. Text apps remain available without image support.
-- Detection has a fixed 1.5-second window; high-latency/filtered replies can prevent automatic selection. Known Sixel terminals can use explicit mode; geometry may require a measured override. Pixel replies lack request IDs, so very late replies during rapid consecutive resizes remain a protocol limitation. Font changes without grid resize may require restart; explicit overrides must be updated manually.
-- Encoding stays off the UI thread, but transmitting the completed raster is serialized on terminal output and can briefly block input. Very large/complex viewports may hit conversion or raster limits; no Pi performance measurements were made. Cleanup/full repaint on actual image damage may still be visible and needs user assessment for flicker.
-- Cancellation stops converter children; native PDF calls may finish before stale output is rejected. Uninterruptible OS/native failures, SIGKILL or power loss cannot guarantee immediate cleanup/restoration. Existing guarded close/terminal restoration paths require user verification.
-- Authentication, inference, editor/clipboard/history behavior were not runtime tested or redesigned. No system software, login or live network inference operation was attempted.
-
-## User manual verification checklist — not performed by the developer
-
-- [ ] Transfer/install on the Pi; confirm the Python dependencies install on aarch64. Launch **inside the existing mlterm-fb session** using explicit Sixel. Verify missing-converter/geometry messages are actionable if encountered; provide measured cell geometry only when required.
-- [ ] Open `/home/samryong/melondice-pdf-test/test.pdf` through F3. Confirm the white page and text appear inside the reserved region, with headers/footers intact, no full-TUI scrolling, and working keyboard focus. This is the first Melon Dice integration display check, distinct from the earlier external pipeline test.
-- [ ] Open real multi-page PDFs with equations, vector figures, embedded fonts/Korean text, photos and scanned pages. Compare document layout/aspect ratio and legibility with the originals; assess the documented palette/color limitation.
-- [ ] Exercise recent-file selection/Enter, file errors, password/incorrect-password/cancel, F4 outline, G page selection and page bounds. PageUp/PageDown must update the page and never retain a stale requested image.
-- [ ] Zoom repeatedly with +/− to limits and pan in every direction. Confirm page clipping stays within the viewport, pan clamps at edges, and page/zoom/pan state survives Home and switching back.
-- [ ] Resize the terminal/cell grid, including below 80×24 and back. Verify geometry refresh, re-rendering, containment, no old-size image, and focus recovery. If changing fonts, restart/update the measured override when necessary.
-- [ ] Open/close Options, Information, picker, password, outline and page dialogs over a visible PDF. The image must disappear behind overlays and reappear at the same viewing position after dismissal. Verify no picture fragments, blank dialog cells or lost cursor/focus.
-- [ ] Stay idle on a PDF and use keys/text updates that do not change its viewport. Assess whether the image remains steady without periodic erase/retransmit, flicker or excessive CPU/output. Check busy/encoding status does not repeatedly resize the viewport.
-- [ ] Test F1 Home, Alt+Tab/F6 cycle order and Home selection/Enter behavior. Preserve PDF position, editor dirty text/cursor/selection/undo and chat draft/transcript scroll. Verify chat streaming continues while PDF/editor is active.
-- [ ] Rapidly change page/zoom/pan, open a different document with the same viewport shape, resize, press Esc during rasterization/encoding and switch away/close while work is pending. No stale completion should appear, no cancelled conversion should write to the TUI, and owned children should terminate/reap.
-- [ ] Close PDF/reopen, close to Home, perform guarded full exit/cancel, and inspect shell restoration. Check image cleanup, cursor, echo/raw/canonical/flow-control/mouse/alternate-screen state and ability to launch again. Check handled hangup/failure recovery when appropriate.
-- [ ] On a Kitty-capable terminal, verify explicit Kitty and auto selection, PNG placement, cleanup and resize. On a terminal advertising both protocols, auto should prefer a positive Kitty acknowledgement; explicit Sixel should remain Sixel.
-- [ ] Verify auto, explicit Sixel, explicit Kitty and off settings/CLI behavior and restart semantics. Unsupported terminals must retain chat/editor and a clear PDF capability explanation. tmux/screen should explain the direct-terminal requirement.
-- [ ] Check internal text copy/paste, editor save/undo/guarded close and existing navigation shortcuts. Confirm no screenshot/image clipboard/PDF editing/export flow was added.
+- [ ] **First install:** Copy source to the Pi and run `python3 scripts/install.py --profile pi` without sudo. Confirm dependencies install on aarch64, the executable launcher is created, the new Pi config saves Sixel and the installer gives actionable prerequisite errors. Do not activate an environment.
+- [ ] **PATH/reinstall:** Use a new login/terminal or the printed one-time PATH export, then type only `melondice`. Confirm repeating the installer does not duplicate managed PATH blocks and does not reset saved preferences/data. Check `.local/bin` resolves to the managed launcher. For symlinked dotfiles, verify clear refusal and use manual PATH plus `--no-path-setup` if needed.
+- [ ] **Bare console:** From the directly connected Pi VT, `melondice` should start exactly one existing mlterm-fb session and the app. Verify fonts, keyboard, PDF Sixel default and geometry. Exit normally from Home and confirm return to the original console with working cursor/echo/terminal modes.
+- [ ] **Existing mlterm:** In an independently opened mlterm-fb, with no launcher marker, type `melondice`. Confirm no nested terminal; normal app exit leaves the existing mlterm shell open. Check the same behavior when TERM is xterm or otherwise differs from the bare console.
+- [ ] **SSH/context:** Through interactive SSH, type `melondice`; no local framebuffer terminal may start. Confirm direct text UI, appropriate explicit graphics overrides for the remote terminal and correct return to SSH. Existing other PTYs/serial terminals must not start a framebuffer session. Help/version should not start a terminal.
+- [ ] **Arguments/preferences:** Verify existing saved auto/Kitty/off choices survive installation/update, a new Pi preference defaults to Sixel, explicit one-time `--pdf-graphics` installer choice saves it, and runtime `--pdf-graphics`, `--pdf-cell-pixels` and `--data-dir` arguments still work, including paths with spaces. An installed custom mlterm path/profile should survive an update without repeating options.
+- [ ] **Update/locks/failure:** With the app or its dedicated terminal active, the installer should refuse an update. Close it, copy updated source and rerun the installer; saved sessions/data/configuration should remain. A package/dependency failure must leave the old environment selected. Check a retry after a missing prerequisite/failed first install, and verify ordinary launches perform no package/network update or environment recreation.
+- [ ] **Collision/repair:** In a safe disposable setup, verify an unrelated executable/symlink at the launcher path is refused rather than overwritten. Check clear errors for missing system Python, bootstrap, selected environment, settings, Python dependency or mlterm path. Repair with the installer after correcting the cause. Verify normal launch still works if the original source directory is moved away, without modifying internal installation files.

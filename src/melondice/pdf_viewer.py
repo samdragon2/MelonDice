@@ -40,14 +40,19 @@ class PDFViewer:
         self.render_request = None
         self.inflight = None
         self.inflight_document = None
-        self.image = None
-        self.image_key = None
+        self.replacement_png = None
+        self.replacement_key = None
+        # A native raster/encoded replacement is not the terminal's display.
+        self.displayed_image = None
+        self.displayed_key = None
+        self.displayed_bounds = None
+        self.revision = 0
+        self.inflight_revision = None
         self.failed_key = None
         self.error = ""
         self.failed = False
         self.document_id = 0
         self.password_path = None
-        self.cancelled_render = False
         self.recent_paths = app.store.recent()
         self.recents = RadioList(values=[(i, path) for i, path in enumerate(self.recent_paths)] or
                                 [(-1, "No recent documents. Press F3 to open a PDF.")], select_on_focus=True)
@@ -56,16 +61,34 @@ class PDFViewer:
                          Label(text=lambda: "\n" + app.graphics.description + "\nThe rest of Melon Dice remains usable.")])
         # Busy/encoding status must not grow/shrink the raster's cell region.
         self.container = HSplit([Window(content=FormattedTextControl(self.heading), height=2,
-                                       wrap_lines=True, always_hide_cursor=True),
+                                       wrap_lines=False, always_hide_cursor=True),
                                 DynamicContainer(lambda: self.viewport if self.pages else recent),
-                                Label(text="F3 Open  F4 Outline  PgUp/PgDn Pages  G Go to page  +/- Zoom  Arrows Pan\n"
-                                           "Esc Cancel pending operation  PDF is read-only; text copy/paste unavailable")])
+                                Label(text="< Previous / > Next  (PgUp/PgDn)  G Page  +/- Zoom  Arrows Pan\n"
+                                           "F3 Open  F4 Outline  Esc Cancel update  PDF read-only; no text copy/paste")])
 
     def focus(self):
         return self.viewport if self.pages else self.recents
 
     def heading(self):
-        return f"pdfViewer | {self.path or 'No document'} | Page {self.page + 1 if self.pages else 0}/{self.pages} | {self.zoom:.0%} | Pan {self.pan_x},{self.pan_y}" + (" | Encoding Sixel…" if self.app.graphics.encoding else " | Working…" if self.open_request or self.render_request else "")
+        shown = self.displayed_key if self.display_identity() is not None else None
+        displayed = (f"Displayed {shown[0] + 1}/{self.pages} {shown[1]:.0%} Pan {shown[2]},{shown[3]}"
+                     if shown else "Displayed: none")
+        requested = f"Requested {self.page + 1 if self.pages else 0}/{self.pages} {self.zoom:.0%} Pan {self.pan_x},{self.pan_y}"
+        if self.open_request:
+            status = "Opening PDF…"
+        elif self.error:
+            status = " ".join(self.error.splitlines())
+        elif self.app.graphics.encoding:
+            status = "Encoding Sixel…"
+        elif self.desired() is not None and (shown != self.desired() or self.render_request):
+            status = "Loading…"
+        else:
+            status = "Ready" if shown else "Waiting for display"
+        # Explicit rows, clipped horizontally: no status/path wrapping can move
+        # the image, and even long errors remain outside the reserved viewport.
+        path = " ".join(str(self.path or "No document").splitlines())
+        return (f"pdfViewer | {displayed} | {path}\n" +
+                f"{requested} | {status}")
 
     def desired(self):
         if not self.pages or not self.app.graphics.supported:
@@ -84,23 +107,31 @@ class PDFViewer:
                 and self.viewport in self.app.ui.layout.find_all_windows())
 
     def display_identity(self):
-        if not self.failed and not self.error and self.image is not None and self.image_key == self.desired():
-            return id(self), self.document_id, self.image_key
+        identity = self.identity(self.displayed_key)
+        if (self.display_safe() and self.app.graphics.placed
+                and self.app.graphics.presenter.placed_identity == identity):
+            return identity
         return None
 
+    def identity(self, key):
+        return (id(self), self.document_id, key) if key is not None else None
+
+    def display_safe(self):
+        desired = self.desired()
+        return (self.displayed_image is not None and desired is not None
+                and self.displayed_key[4:] == desired[4:] and self.displayed_bounds == self.bounds)
+
     def viewport_text(self):
-        if self.failed:
-            return "PDF renderer unavailable. Close and reopen pdfViewer.\n" + self.error
         if not self.app.graphics.supported:
             return ("Original-layout PDF images unavailable in this terminal.\n\n" + self.app.graphics.description +
                     "\n\nUse a compatible Kitty or Sixel terminal; mlterm-fb: --pdf-graphics sixel.\n"
                     "No GUI will be opened and no extracted-text imitation will be shown.\n"
                     "Home, ChatGPT, the text editor, file metadata, and outline remain available.")
-        if self.error:
-            return "PDF rendering error: " + self.error
-        if self.image is not None and self.image_key == self.desired():
-            return ""
-        return "Rendering PDF viewport…"
+        # Keep the text diff over image cells invariant, including initial load,
+        # failure and cancellation. A changing placeholder would erase Sixel
+        # picture cells even if before_render retained the image. Status lives
+        # in the fixed heading; full-screen damage is handled by render hooks.
+        return ""
 
     def open(self):
         if self.open_request:
@@ -142,10 +173,13 @@ class PDFViewer:
                         self.password_path = self.open_path
                     elif kind == "opened":
                         self.backend.send("commit")
+                        self.suspend_updates()
+                        self.app.graphics.hide(self.app.ui.output, free=True)
                         self.document_id += 1
                         self.path, self.pages, self.outline = self.open_path, value["pages"], value["outline"]
                         self.page, self.zoom, self.pan_x, self.pan_y = 0, 1.0, 0, 0
-                        self.image, self.image_key, self.failed_key, self.error = None, None, None, ""
+                        self.replacement_png, self.replacement_key, self.failed_key, self.error = None, None, None, ""
+                        self.displayed_image = self.displayed_key = self.displayed_bounds = None
                         try:
                             self.app.store.recent(self.path)
                         except OSError as error:
@@ -156,44 +190,88 @@ class PDFViewer:
                         self.app.notify("Cannot open PDF: " + str(value))
                 elif sequence == self.render_request:
                     self.render_request = None
-                    if self.cancelled_render:
-                        self.cancelled_render = False
-                        continue
-                    if self.inflight_document != self.document_id or self.inflight != self.desired():
+                    if (self.inflight_document != self.document_id or self.inflight != self.desired()
+                            or self.inflight_revision != self.revision):
                         continue
                     if kind == "rendered":
                         self.pan_x, self.pan_y = value["pan"]
                         self.full = value["full"]
-                        self.image, self.image_key = value["png"], self.desired()
+                        self.replacement_png, self.replacement_key = value["png"], self.desired()
                         self.error, self.failed_key = "", None
                     else:
                         self.error, self.failed_key = str(value), self.inflight
+                        self.app.notify("PDF rendering failed: " + self.error)
             if self.password_path and self.app.active == "pdf" and not self.app.dialog:
                 path, self.password_path = self.password_path, None
                 prompt(self.app, "PDF password", "Enter password (also shown after an incorrect password):",
                        lambda password: self.load(path, password), secret=True)
             desired = self.desired()
+            if self.replacement_key is not None and self.replacement_key != desired:
+                self.drop_replacement()
             if (self.visible() and not self.open_request and not self.render_request
-                    and desired is not None and desired != self.image_key and desired != self.failed_key):
+                    and desired is not None and desired != self.replacement_key and desired != self.failed_key
+                    and not (self.display_safe() and desired == self.displayed_key)):
                 self.error = ""
                 self.inflight = desired
                 self.inflight_document = self.document_id
+                self.inflight_revision = self.revision
                 self.render_request = self.backend.send("render", *desired)
                 changed = True
-            identity = self.display_identity()
-            if self.visible() and identity is not None:
-                self.app.graphics.prepare(self.app.tasks, self.image, identity, self.app.ui.invalidate)
+            if self.visible():
+                if self.replacement_png is not None and self.replacement_key == desired:
+                    self.prepare(self.replacement_png, self.replacement_key)
+                elif self.display_safe() and not self.app.graphics.placed:
+                    self.prepare(self.displayed_image, self.displayed_key)
         except Exception as error:
-            self.failed, self.error = True, str(error)
-            self.app.notify(f"PDF renderer error: {error}")
+            self.failed = True
+            self.error = f"PDF renderer unavailable: {error}. Close and reopen pdfViewer."
+            self.drop_replacement()
+            self.app.notify(self.error)
             changed = True
         return changed
 
+    def prepare(self, png, key):
+        identity = self.identity(key)
+        revision = self.revision
+
+        def failed(detail):
+            if (revision == self.revision and identity == self.identity(key)
+                    and key == self.desired()):
+                self.error, self.failed_key = detail, self.desired()
+                self.replacement_png = self.replacement_key = None
+                self.app.notify(detail)
+
+        self.app.graphics.prepare(self.app.tasks, png, identity, self.app.ui.invalidate, failed)
+
+    def drop_replacement(self):
+        self.app.graphics.suspend()
+        self.replacement_png = self.replacement_key = None
+
+    def suspend_updates(self):
+        # Native calls cannot be interrupted individually. Keep the one in-flight
+        # sequence until drained, but reject it even if the user returns to its key.
+        self.revision += 1
+        self.drop_replacement()
+
+    def leave_surface(self):
+        self.suspend_updates()
+        self.displayed_image = self.displayed_key = self.displayed_bounds = None
+        self.app.graphics.suspend(free=True)
+
+    def request_changed(self, previous):
+        if previous != (self.page, self.zoom, self.pan_x, self.pan_y):
+            self.suspend_updates()
+            self.failed_key = None
+            if not self.failed:
+                self.error = ""
+
     def turn(self, amount):
         if self.pages and not self.open_request:
+            previous = self.page, self.zoom, self.pan_x, self.pan_y
             self.page = max(0, min(self.pages - 1, self.page + amount))
-            self.pan_x = self.pan_y = 0
-            self.error = ""
+            if self.page != previous[0]:
+                self.pan_x = self.pan_y = 0
+            self.request_changed(previous)
 
     def goto(self):
         if not self.pages:
@@ -210,14 +288,16 @@ class PDFViewer:
 
     def magnify(self, factor):
         if self.pages and not self.open_request:
+            previous = self.page, self.zoom, self.pan_x, self.pan_y
             self.zoom = max(0.25, min(4.0, self.zoom * factor))
-            self.error = ""
+            self.request_changed(previous)
 
     def pan(self, x, y):
         if self.pages and not self.open_request:
+            previous = self.page, self.zoom, self.pan_x, self.pan_y
             self.pan_x = max(0, self.pan_x + x * 32)
             self.pan_y = max(0, self.pan_y + y * 32)
-            self.error = ""
+            self.request_changed(previous)
 
     def show_outline(self):
         entries = [(level, title, page) for level, title, page in self.outline if page > 0]
@@ -229,28 +309,34 @@ class PDFViewer:
             self.backend.send("discard")
             self.open_request = None
             self.app.notify("Pending PDF open cancelled; previous committed document preserved.")
-        elif self.render_request:
-            self.cancelled_render = True
-            if self.image_key:
-                self.page, self.zoom, self.pan_x, self.pan_y = self.image_key[:4]
-            else:
-                self.failed_key = self.desired()
-                self.error = "Display update cancelled. Change zoom/page to request another render."
-            self.app.notify("Pending display cancelled. The native renderer may finish its call in the background.")
-        elif self.app.graphics.encoding:
-            self.app.graphics.suspend()
+        elif self.failed:
+            self.app.notify(self.error)
+        elif (self.render_request or self.replacement_png is not None or self.app.graphics.encoding
+              or self.desired() != self.displayed_key):
+            self.suspend_updates()
             self.failed_key = self.desired()
-            self.image, self.image_key = None, None
-            self.error = "Sixel encoding cancelled. Change page/zoom/pan to request another display."
+            self.error = "Update cancelled. Change page/zoom/pan to retry."
             self.app.notify(self.error)
 
     def present(self):
-        identity = self.display_identity()
-        if identity is not None:
-            self.app.graphics.show(self.app.ui.output, self.image, identity, self.bounds)
+        if self.replacement_png is not None and self.replacement_key == self.desired():
+            png, key = self.replacement_png, self.replacement_key
+        elif self.display_safe():
+            png, key = self.displayed_image, self.displayed_key
+        else:
+            return
+        identity = self.identity(key)
+        if self.app.graphics.ready(identity):
+            previous = self.display_identity()
+            if self.app.graphics.show(self.app.ui.output, png, identity, self.bounds):
+                self.displayed_image, self.displayed_key, self.displayed_bounds = png, key, self.bounds
+                if self.replacement_key == key:
+                    self.replacement_png = self.replacement_key = None
+                if previous != identity:
+                    self.app.ui.invalidate()  # Metadata now describes a sent frame.
 
     def close(self):
-        self.app.graphics.suspend(free=True)
+        self.leave_surface()
         if self.backend:
             self.backend.close()
         self.app.graphics.hide(self.app.ui.output, free=True)

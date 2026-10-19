@@ -217,9 +217,12 @@ class Graphics:
             if match and not self.settled and time.monotonic() <= self.deadline:
                 self.sixel_advertised = "4" in match[1].split(";")[1:]
 
-    def prepare(self, tasks, png, identity, changed):
+    def prepare(self, tasks, png, identity, changed, failed):
         if self.supported:
-            self.presenter.prepare(tasks, png, identity, changed, self.disable)
+            self.presenter.prepare(tasks, png, identity, changed, failed)
+
+    def ready(self, identity):
+        return self.supported and self.presenter.ready(identity)
 
     def suspend(self, free=False):
         if self.presenter:
@@ -231,14 +234,14 @@ class Graphics:
 
     def show(self, output, png, identity, rectangle):
         if not self.supported:
-            return
+            return False
         x, y, columns, rows = rectangle
         size = output.get_size()
         # Sixel has no portable clipping rectangle. Never send an out-of-bounds
         # raster, and retain one text row below for cursor-origin Sixel terminals.
         if min(columns, rows) <= 0 or min(x, y) < 0 or x + columns > size.columns or y + rows >= size.rows:
-            return
-        self.presenter.show(output, png, identity, rectangle)
+            return False
+        return self.presenter.show(output, png, identity, rectangle)
 
 
 class ReplyReader:
