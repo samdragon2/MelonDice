@@ -1,5 +1,26 @@
 # Melon Dice Sixel PDF presentation — development report
 
+## Follow-up fix: PDF viewer construction (2026-10-19)
+
+The user reported `Label.__init__() got an unexpected keyword argument 'height'`
+when opening pdfViewer on the Pi. The pinned prompt_toolkit 3.0.52 `Label`
+constructor does not accept `height`; this prevented construction of the viewer,
+before a PDF could be opened or displayed.
+
+Replaced the heading Label with a non-focusable `Window` containing a callable
+`FormattedTextControl`. `Window` supports `height=2`, so the intended fixed
+two-row heading remains in place during status updates. Reviewed the locally
+installed framework source and all project Label calls; no other Label call
+passes `height`.
+
+Verification: source compilation, the existing source-only static audit, Pyflakes,
+and `git diff --check` passed. No application modules were imported or run;
+no graphics probe, conversion experiment, login or runtime test was performed.
+The user still needs to verify viewer startup and PDF presentation on the Pi.
+No commit, branch change or push was performed for this follow-up. The original
+implementation report below describes the earlier delivery, including its Git
+state at that time.
+
 Date: **2026-10-19**. Project version: **0.2.0**. Author: **SamRyong**. Workspace: `/Users/samryong/MelonDice`, branch **pdfattach**.
 
 ## Scope and verification boundary

@@ -55,7 +55,8 @@ class PDFViewer:
         recent = HSplit([Label(text="Recent files — Up/Down select, Enter open"), self.recents,
                          Label(text=lambda: "\n" + app.graphics.description + "\nThe rest of Melon Dice remains usable.")])
         # Busy/encoding status must not grow/shrink the raster's cell region.
-        self.container = HSplit([Label(text=self.heading, height=2),
+        self.container = HSplit([Window(content=FormattedTextControl(self.heading), height=2,
+                                       wrap_lines=True, always_hide_cursor=True),
                                 DynamicContainer(lambda: self.viewport if self.pages else recent),
                                 Label(text="F3 Open  F4 Outline  PgUp/PgDn Pages  G Go to page  +/- Zoom  Arrows Pan\n"
                                            "Esc Cancel pending operation  PDF is read-only; text copy/paste unavailable")])
