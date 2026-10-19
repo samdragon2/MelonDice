@@ -18,7 +18,7 @@
 
 ## 기존 구현의 개발 이력
 
-다음은 통합할 기존 커밋·이전 보고서의 기록이며 이번 작업에서 기능을 새로 구현한 내역이 아닙니다.
+다음은 통합한 기존 커밋·이전 보고서의 기록이며 이번 작업에서 기능을 새로 구현한 내역이 아닙니다.
 
 | 커밋 | 내용 |
 | --- | --- |
@@ -58,9 +58,13 @@ PDF 상태는 요청·native 작업·대체 raster/encoding·실제 표시 프�
 
 ## Git 통합 및 게시 상태
 
-시작 시 `pdfattach` HEAD는 `b0e570f`, 로컬 `main`과 로컬에 기록된 `origin/main`은 `d0b9234`였습니다. 작업 트리는 깨끗하여 포함할 기존 미커밋 변경이 없었습니다. `main`은 `pdfattach`의 조상이므로 fast-forward가 가능합니다. 기존 제외 파일인 `.venv`, egg-info, bytecode 및 `Melon Dice.txt`는 추가하지 않습니다.
+시작 시 `pdfattach` HEAD는 `b0e570f`, 로컬 `main`과 로컬에 기록된 `origin/main`은 `d0b9234`였습니다. 작업 트리는 깨끗하여 포함할 기존 미커밋 변경이 없었습니다. `main`이 `pdfattach`의 조상임을 확인했습니다. 기존 제외 파일인 `.venv`, egg-info, bytecode 및 `Melon Dice.txt`는 추가하지 않았습니다. 인증 정보·실제 authorization URL·생성 파일·무관한 작업은 커밋하지 않았습니다.
 
-문서·버전 커밋 후 main에 fast-forward 통합할 예정입니다. 완료 후 이 부분에 실제 커밋·통합 결과와 최종 브랜치를 기록합니다. 원격을 fetch/push하지 않았으므로 origin 추적 ref는 로컬에 이미 저장된 상태만 나타냅니다. GitHub 게시와 main push는 별도 단계입니다.
+- 문서·버전 준비 커밋: **`1b35e6c346c237d9d23771d67f7ec201c319a87d`**, `Document Melon Dice user workflow and advance beta to 0.3.0`. `pdfattach`에서 지정한 5개 파일만 커밋했습니다.
+- `git switch main` 후 `git merge --ff-only pdfattach` 성공: **`d0b9234` → `1b35e6c` Fast-forward**. 충돌·별도 merge commit 없이 PDF 작업 3개 커밋과 문서·버전 커밋을 모두 보존했습니다. `git merge-base --is-ancestor pdfattach main` 성공으로 포함 관계를 확인했습니다.
+- 통합 결과 기록 커밋은 **`Record completed pdfattach integration and verification`**이며 보고서만 갱신합니다. 최종 브랜치는 **`main`**, 관련 변경은 모두 커밋되고 작업 트리는 clean입니다. 커밋 목록·pdfattach 포함 관계·전체 통합 범위 공백 검사를 Git으로 확인했습니다.
+- reset·force-push·history rewrite·브랜치 삭제·릴리스 태그 생성을 하지 않았습니다. `pdfattach`와 기존 브랜치를 보존했습니다.
+- **GitHub에 push하지 않았습니다.** fetch도 수행하지 않아 origin 추적 ref는 로컬에 이미 저장된 상태만 나타냅니다. 최종 main은 이 로컬 origin/main보다 기존 PDF 3개 + 문서/버전 1개 + 결과 보고서 1개, 총 5개 커밋 앞섭니다. **main 게시(push)는 별도 단계로 남습니다.**
 
 ## 남은 이슈와 사용자 확인 항목
 
